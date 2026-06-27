@@ -1,6 +1,6 @@
 [package]
 name = "wayland-mouse"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Mac-like mouse acceleration for Wayland — pointer + scroll-wheel, tuned below the compositor via evdev/uinput."
 license = "MIT"
@@ -19,13 +19,17 @@ path = "src/main.rs"
 evdev = "0.12"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
+arc-swap = "1"
+# Live-tuning TUI client; pulled in by the (default) `tune` feature.
+ratatui = { version = "0.29", optional = true }
 
 [features]
-default = []
-# Live-tuning TUI (v0.4) lands behind this flag so the default `cargo install`
-# stays lean. Scaffolded now; no code gated on it yet.
-tune = []
+# `tune` ships the ratatui live-tuning UI. On by default; build the daemon
+# without it via `cargo build --no-default-features` for a leaner binary.
+default = ["tune"]
+tune = ["dep:ratatui"]
 
 [profile.release]
 opt-level = 3

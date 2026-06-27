@@ -1,13 +1,12 @@
-//! Self-contained `install` / `uninstall` / `status` subcommands. Replaces the
-//! old install.sh / uninstall.sh, and migrates an existing v0.1 `scroll-accel`
-//! install in the process. Everything here needs root.
+//! Self-contained `install` / `uninstall` / `status` subcommands (replacing the
+//! old install.sh / uninstall.sh). Everything here needs root.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-use crate::config::{self, CONFIG_DIR, CONFIG_PATH, OLD_CONFIG_PATH};
+use crate::config::{self, CONFIG_DIR, CONFIG_PATH};
 use crate::desktop;
 
 const BIN_PATH: &str = "/usr/local/bin/wayland-mouse";
@@ -15,10 +14,6 @@ const SERVICE_NAME: &str = "wayland-mouse.service";
 const SERVICE_PATH: &str = "/etc/systemd/system/wayland-mouse.service";
 const MODULES_LOAD: &str = "/etc/modules-load.d/uinput.conf";
 const SERVICE_UNIT: &str = include_str!("../wayland-mouse.service");
-
-const OLD_BIN: &str = "/usr/local/bin/scroll-accel";
-const OLD_SERVICE_NAME: &str = "scroll-accel.service";
-const OLD_SERVICE_PATH: &str = "/etc/systemd/system/scroll-accel.service";
 
 fn is_root() -> bool {
     Command::new("id")
@@ -50,8 +45,6 @@ pub fn install() -> i32 {
 
     println!("==> Stopping any running service");
     sh_quiet("systemctl", &["stop", SERVICE_NAME]);
-
-    migrate_old_service();
 
     if let Err(e) = install_binary() {
         eprintln!("error: {e}");
@@ -110,39 +103,17 @@ fn install_binary() -> Result<(), String> {
     Ok(())
 }
 
-/// Write the config only if absent — never clobber a user's tuning. Migrates a
-/// legacy scroll-accel.conf if one is found.
+/// Write the config only if absent — never clobber a user's tuning.
 fn ensure_config() -> Result<(), String> {
     fs::create_dir_all(CONFIG_DIR).map_err(|e| format!("creating {CONFIG_DIR}: {e}"))?;
     if Path::new(CONFIG_PATH).exists() {
         println!("==> Keeping existing config {CONFIG_PATH}");
         return Ok(());
     }
-    if let Ok(old) = fs::read_to_string(OLD_CONFIG_PATH) {
-        println!("==> Migrating {OLD_CONFIG_PATH} -> {CONFIG_PATH}");
-        let cf = config::migrate_old(&old);
-        let toml = config::to_toml_string(&cf);
-        fs::write(CONFIG_PATH, toml).map_err(|e| format!("writing {CONFIG_PATH}: {e}"))?;
-        let _ = fs::rename(OLD_CONFIG_PATH, format!("{OLD_CONFIG_PATH}.migrated"));
-    } else {
-        println!("==> Writing default config -> {CONFIG_PATH}");
-        fs::write(CONFIG_PATH, config::DEFAULT_TEMPLATE)
-            .map_err(|e| format!("writing {CONFIG_PATH}: {e}"))?;
-    }
+    println!("==> Writing default config -> {CONFIG_PATH}");
+    fs::write(CONFIG_PATH, config::DEFAULT_TEMPLATE)
+        .map_err(|e| format!("writing {CONFIG_PATH}: {e}"))?;
     Ok(())
-}
-
-/// Tear down a v0.1 scroll-accel install if present.
-fn migrate_old_service() {
-    let old_present = Path::new(OLD_SERVICE_PATH).exists() || Path::new(OLD_BIN).exists();
-    if !old_present {
-        return;
-    }
-    println!("==> Found an old scroll-accel install — migrating it off");
-    sh_quiet("systemctl", &["disable", "--now", OLD_SERVICE_NAME]);
-    let _ = fs::remove_file(OLD_SERVICE_PATH);
-    let _ = fs::remove_file(OLD_BIN);
-    sh_quiet("systemctl", &["daemon-reload"]);
 }
 
 pub fn uninstall() -> i32 {
@@ -154,10 +125,6 @@ pub fn uninstall() -> i32 {
     println!("==> Stopping & disabling the service");
     sh_quiet("systemctl", &["disable", "--now", SERVICE_NAME]);
     let _ = fs::remove_file(SERVICE_PATH);
-    // Clean any old-named remnants too.
-    sh_quiet("systemctl", &["disable", "--now", OLD_SERVICE_NAME]);
-    let _ = fs::remove_file(OLD_SERVICE_PATH);
-    let _ = fs::remove_file(OLD_BIN);
     sh_quiet("systemctl", &["daemon-reload"]);
 
     let _ = fs::remove_file(BIN_PATH);

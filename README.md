@@ -8,7 +8,7 @@ Wayland/GNOME gives you no mouse-wheel speed control and only a blunt, capped po
 
 - 🖱️ **macOS-style pointer acceleration** — pixel-precise when you move slowly, accelerates smoothly as you move faster, with a soft cap so fast flicks fly without teleporting. The feel GNOME won't give you.
 - 🌀 **Scroll-wheel acceleration that respects your fingers** — slow scrolling stays exactly 1:1 for precision, but spin a little faster and it ramps up so you can blow through long pages in one flick instead of grinding the wheel.
-- 🎛️ **Presets, then fine-tunable** — start from `mac-like`, `subtle`, or `off`, then override any knob. A live `--debug` readout shows your real speeds so you can dial it in.
+- 🎛️ **Presets, then live-tunable** — start from `mac-like`, `subtle`, or `off`, then shape every knob in a colorful terminal UI (`wayland-mouse tune`) where the curve moves as you move the mouse.
 - 🎯 **DPI-independent (like macOS)** — calibrate once, then just tell it your DPI; the feel stays identical across mice, resolutions, and machines.
 - 🦀 **Rust, effectively zero overhead** — built for high-Hz gaming mice; forwards an **8000 Hz** input stream with microsecond latency. Works at the kernel input layer, so it covers all apps — browsers, terminals, Electron, games.
 - 🛡️ **Safe by design** — a small systemd service; the device grab is tied to the process, so if it ever stops your mouse instantly returns to normal. No lockups.
@@ -58,13 +58,23 @@ wayland-mouse config --print      # effective (resolved, DPI-rescaled) values
 wayland-mouse config --check      # validate syntax, keys, and ranges
 ```
 
-Tune against your actual hand speed by watching the live numbers:
+## Tune it live
+
+Editing numbers is fine, but the fun way is the live tuner:
 
 ```bash
-sudo systemctl stop wayland-mouse
-sudo wayland-mouse run --debug    # move + scroll, note the speeds, Ctrl-C
-sudo systemctl start wayland-mouse
+sudo wayland-mouse tune
 ```
+
+A colorful terminal UI with tabs for **Pointer**, **Wheel**, **Buttons**, and **General**. Each curve is drawn live with a marker that **rides the curve as you move and scroll the mouse**, so you shape the feel by hand instead of guessing:
+
+- `Tab` switch tabs · `↑↓` pick a knob · `←→` adjust (`Shift` for bigger steps) · `Space` toggle
+- `p` cycle preset · `r` reset the tab to its preset · `s` save to disk · `q` quit
+- every change applies **instantly** while you're moving the mouse; `s` persists it
+
+It talks to the running daemon over a unix socket, so the service must be up (and, like the rest, it needs root). Don't know your DPI? You don't need to — just tune by feel; DPI lives quietly on the General tab.
+
+(Prefer the terminal? `sudo wayland-mouse run --debug` still prints raw speeds.)
 
 ## Remap buttons
 
@@ -98,8 +108,11 @@ wayland-mouse install      # install binary, service, config, desktop integratio
 wayland-mouse uninstall    # remove all of the above, restore desktop settings
 wayland-mouse status       # service state + effective config
 wayland-mouse buttons      # identify your mouse buttons by name (for remapping)
+wayland-mouse tune         # live terminal UI to shape the curves (needs the running service)
 wayland-mouse config --print | --check
 ```
+
+> The `tune` UI ships by default. For a leaner daemon-only binary, build with `cargo build --no-default-features`.
 
 Global flags: `--debug` (live speed readout), `--config <path>` (use a different config file).
 

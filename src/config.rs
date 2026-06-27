@@ -15,8 +15,6 @@ use serde::{Deserialize, Serialize};
 /// Where the system config lives (a directory, so we can grow into it).
 pub const CONFIG_DIR: &str = "/etc/wayland-mouse";
 pub const CONFIG_PATH: &str = "/etc/wayland-mouse/config.toml";
-/// Legacy v0.1 config, read only when migrating.
-pub const OLD_CONFIG_PATH: &str = "/etc/scroll-accel.conf";
 
 /// The `ptr_*` curve in every preset is expressed at this DPI; [`rescale`] maps
 /// it to the device's actual DPI so the feel is DPI-independent (like macOS).
@@ -140,6 +138,13 @@ fn preset(name: &str) -> Option<Settings> {
         "off" | "flat" | "none" | "passthrough" => Some(off()),
         _ => None,
     }
+}
+
+/// The preset's config-space (un-rescaled) settings, falling back to mac-like.
+/// The tuner uses this to show effective values before any override is applied.
+#[cfg(feature = "tune")]
+pub fn preset_or_default(name: &str) -> Settings {
+    preset(name).unwrap_or_else(mac_like)
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +329,18 @@ impl ConfigFile {
     pub fn resolve_global(&self) -> Settings {
         self.resolve("")
     }
+
+    /// Config-space (un-rescaled) global settings: preset + global overrides,
+    /// before DPI rescale. This is what the tuner edits and plots — the values
+    /// as they appear in the file, independent of DPI.
+    #[cfg(feature = "tune")]
+    pub fn resolve_unscaled(&self) -> Settings {
+        let mut s = preset_or_default(&self.preset);
+        apply_wheel(&mut s, &self.wheel);
+        apply_pointer(&mut s, &self.pointer);
+        s.dpi = self.dpi.unwrap_or(REFERENCE_DPI);
+        s
+    }
 }
 
 fn apply_wheel(s: &mut Settings, w: &WheelCfg) {
@@ -399,56 +416,6 @@ pub fn load(path: &Path) -> Result<ConfigFile, String> {
         Err(e) => return Err(format!("reading {}: {e}", path.display())),
     };
     toml::from_str(&text).map_err(|e| format!("parsing {}:\n{e}", path.display()))
-}
-
-// ---------------------------------------------------------------------------
-// Migration from the v0.1 flat key=value format
-// ---------------------------------------------------------------------------
-
-/// Translate a legacy `/etc/scroll-accel.conf` body into the new config.
-pub fn migrate_old(old_text: &str) -> ConfigFile {
-    let mut cf = ConfigFile::default();
-    for line in old_text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        let k = k.trim();
-        let v = v.split('#').next().unwrap_or("").trim();
-        let f = |s: &str| s.parse::<f64>().ok();
-        match k {
-            "threshold_dps" => cf.wheel.start_speed = f(v),
-            "accel" => cf.wheel.strength = f(v),
-            "exponent" => cf.wheel.curve = f(v),
-            "max_mult" => cf.wheel.max_multiplier = f(v),
-            "attack" => cf.wheel.smoothing_up = f(v),
-            "release" => cf.wheel.smoothing_down = f(v),
-            "reset_gap_ms" => cf.wheel.reset_after_ms = f(v),
-            "pointer_accel" => cf.pointer.enabled = Some(v != "0" && !v.is_empty()),
-            "ptr_base_gain" => cf.pointer.precision_gain = f(v),
-            "ptr_max_gain" => cf.pointer.max_gain = f(v),
-            "ptr_mid_speed" => cf.pointer.midpoint_speed = f(v),
-            "ptr_width" => cf.pointer.transition_width = f(v),
-            "ptr_smoothing_ms" => cf.pointer.smoothing_ms = f(v),
-            "mouse_dpi" => cf.dpi = f(v),
-            "name_filter" => cf.name_filter = v.to_string(),
-            "debug" => cf.debug = v != "0" && !v.is_empty(),
-            _ => {}
-        }
-    }
-    cf
-}
-
-/// Serialize a migrated config to TOML with a provenance header.
-pub fn to_toml_string(cf: &ConfigFile) -> String {
-    let body = toml::to_string_pretty(cf).unwrap_or_default();
-    format!(
-        "# wayland-mouse config — migrated from {OLD_CONFIG_PATH}.\n\
-         # See https://github.com/monfa-red/wayland-mouse for all options and presets.\n\n{body}"
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -777,32 +744,6 @@ mod tests {
         let cf: ConfigFile = toml::from_str("preset = \"bogus\"").unwrap();
         let s = cf.resolve_global();
         assert!(approx(s.threshold_dps, 8.0)); // mac-like fallback
-    }
-
-    #[test]
-    fn migration_preserves_values() {
-        let old = "threshold_dps = 12\naccel = 0.2\nmax_mult = 6\n\
-                   pointer_accel = 0\nptr_base_gain = 0.7\nptr_max_gain = 3.0\n\
-                   ptr_mid_speed = 5000\nmouse_dpi = 1400\nname_filter = Keychron\n";
-        let cf = migrate_old(old);
-        assert_eq!(cf.name_filter, "Keychron");
-        let s = cf.resolve_global();
-        assert!(approx(s.threshold_dps, 12.0));
-        assert!(approx(s.accel, 0.2));
-        assert!(approx(s.max_mult, 6.0));
-        assert!(!s.pointer_accel);
-        assert!(approx(s.ptr_base, 0.7));
-        assert!(approx(s.ptr_max, 3.0));
-        assert!(approx(s.ptr_mid, 5000.0));
-    }
-
-    #[test]
-    fn migrated_config_serializes_and_reparses() {
-        let cf = migrate_old("threshold_dps = 9\nptr_max_gain = 2.0\nmouse_dpi = 800\n");
-        let reparsed: ConfigFile = toml::from_str(&to_toml_string(&cf)).unwrap();
-        let s = reparsed.resolve_global();
-        assert!(approx(s.threshold_dps, 9.0));
-        assert!(approx(s.dpi, 800.0));
     }
 
     #[test]

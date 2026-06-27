@@ -14,6 +14,7 @@ pub struct Pointer {
     speed: f64, // smoothed combined speed, counts/sec
     carry_x: f64,
     carry_y: f64,
+    last_gain: f64,
 }
 
 impl Pointer {
@@ -23,7 +24,16 @@ impl Pointer {
             speed: 0.0,
             carry_x: 0.0,
             carry_y: 0.0,
+            last_gain: 1.0,
         }
+    }
+    /// Latest smoothed pointer speed (counts/sec), for telemetry.
+    pub fn speed(&self) -> f64 {
+        self.speed
+    }
+    /// Latest applied gain, for telemetry.
+    pub fn gain(&self) -> f64 {
+        self.last_gain
     }
 }
 
@@ -59,6 +69,7 @@ pub fn accel_pointer(
     p.speed += alpha * (v_inst - p.speed);
 
     let gain = pointer_gain(c, p.speed);
+    p.last_gain = gain;
     p.carry_x += dx as f64 * gain;
     p.carry_y += dy as f64 * gain;
     let ox = p.carry_x.trunc() as i32;

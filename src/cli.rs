@@ -1,7 +1,6 @@
 //! Command-line surface: subcommand parsing and dispatch.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
@@ -40,6 +39,9 @@ enum Command {
     Status,
     /// Print the evdev name of each mouse button as you press it (for [[button]] config).
     Buttons,
+    /// Live-tune the curves in a colorful terminal UI (needs the running service; root).
+    #[cfg(feature = "tune")]
+    Tune,
     /// Inspect the configuration.
     Config {
         /// Print the effective (resolved, DPI-rescaled) settings.
@@ -64,6 +66,8 @@ pub fn main() {
         Some(Command::Uninstall) => std::process::exit(install::uninstall()),
         Some(Command::Status) => std::process::exit(install::status()),
         Some(Command::Buttons) => std::process::exit(device::watch_buttons()),
+        #[cfg(feature = "tune")]
+        Some(Command::Tune) => std::process::exit(crate::tune::run()),
         Some(Command::Config { print: _, check }) => {
             let code = if check {
                 config::check(&cfg_path)
@@ -93,5 +97,6 @@ fn run_daemon(debug: bool, path: &std::path::Path) {
     if debug {
         cf.debug = true;
     }
-    device::run(Arc::new(cf)); // loops forever
+    let shared = crate::ipc::Shared::new(cf, path.to_path_buf());
+    device::run(shared); // loops forever
 }

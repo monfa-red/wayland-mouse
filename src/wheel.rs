@@ -17,6 +17,7 @@ pub struct Axis {
     last: Option<SystemTime>,
     smoothed: f64, // detents/sec
     carry: f64,
+    last_mult: f64,
 }
 
 impl Axis {
@@ -25,7 +26,16 @@ impl Axis {
             last: None,
             smoothed: 0.0,
             carry: 0.0,
+            last_mult: 1.0,
         }
+    }
+    /// Latest smoothed wheel speed (detents/sec), for telemetry.
+    pub fn dps(&self) -> f64 {
+        self.smoothed
+    }
+    /// Latest applied multiplier, for telemetry.
+    pub fn mult(&self) -> f64 {
+        self.last_mult
     }
 }
 
@@ -68,6 +78,7 @@ pub fn scroll(
     ax.smoothed += a * (inst - ax.smoothed);
 
     let mult = mult_for_speed(c, ax.smoothed);
+    ax.last_mult = mult;
     ax.carry += (hires_in as f64) * mult;
     let outv = ax.carry.trunc() as i32;
     ax.carry -= outv as f64;

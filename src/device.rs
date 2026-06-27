@@ -11,26 +11,26 @@ use std::time::Duration;
 use evdev::uinput::VirtualDeviceBuilder;
 use evdev::{AttributeSet, Device, EventType, InputEvent, Key, RelativeAxisType};
 
-use crate::config::ConfigFile;
+use crate::ipc::Shared;
 use crate::pointer::{accel_pointer, Pointer};
 use crate::remap::{build_table, RemapTable, VirtualKeyboard};
 use crate::wheel::{scroll, Axis};
 
 /// Virtual-device name prefix for devices we create. `is_wheel_mouse` skips
-/// anything carrying this (or the legacy prefix) so we never grab our own output.
+/// anything carrying this so we never grab our own output.
 pub const VIRT_PREFIX: &str = "wayland-mouse";
-/// v0.1 prefix — still filtered so a stale `scroll-accel` virtual device left
-/// over mid-migration isn't grabbed.
-pub const OLD_VIRT_PREFIX: &str = "scroll-accel";
 
 const REL_WHEEL_HI: RelativeAxisType = RelativeAxisType(0x0b);
 const REL_HWHEEL_HI: RelativeAxisType = RelativeAxisType(0x0c);
 
 /// Daemon entry point: enumerate, grab new wheel mice, and watch for hotplug.
-pub fn run(cfg: Arc<ConfigFile>) {
+pub fn run(shared: Arc<Shared>) {
     let handled: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
+    let cfg = shared.current();
 
     // One shared virtual keyboard for all button remaps (created only if needed).
+    // Button rules are resolved at startup; editing them in the tuner saves to
+    // disk and applies on the next restart.
     let remap = Arc::new(build_table(&cfg.button));
     let keyboard = if remap.is_empty() {
         None
@@ -44,10 +44,17 @@ pub fn run(cfg: Arc<ConfigFile>) {
         }
     };
 
+    // Control socket for the live-tuning UI.
+    {
+        let shared = shared.clone();
+        thread::spawn(move || crate::ipc::serve(shared));
+    }
+
+    let name_filter = cfg.name_filter.clone();
     eprintln!(
         "wayland-mouse started (preset={}, name_filter={:?}, buttons={}, debug={})",
         cfg.preset,
-        cfg.name_filter,
+        name_filter,
         cfg.button.len(),
         cfg.debug
     );
@@ -60,16 +67,17 @@ pub fn run(cfg: Arc<ConfigFile>) {
                     continue;
                 }
             }
-            if is_wheel_mouse(&dev, &cfg.name_filter) {
+            if is_wheel_mouse(&dev, &name_filter) {
                 drop(dev);
                 handled.lock().unwrap().insert(path.clone());
-                let cfg = cfg.clone();
+                let shared = shared.clone();
                 let handled = handled.clone();
                 let remap = remap.clone();
                 let keyboard = keyboard.clone();
                 let p = path.clone();
                 thread::spawn(move || {
-                    if let Err(e) = run_device(p.clone(), cfg, remap, keyboard, handled.clone()) {
+                    if let Err(e) = run_device(p.clone(), shared, remap, keyboard, handled.clone())
+                    {
                         eprintln!("device {p:?} error: {e}");
                         if let Ok(mut s) = handled.lock() {
                             s.remove(&p);
@@ -84,7 +92,7 @@ pub fn run(cfg: Arc<ConfigFile>) {
 
 fn is_wheel_mouse(dev: &Device, filter: &str) -> bool {
     let name = dev.name().unwrap_or("");
-    if name.contains(VIRT_PREFIX) || name.contains(OLD_VIRT_PREFIX) {
+    if name.contains(VIRT_PREFIX) {
         return false;
     }
     let has_wheel = dev
@@ -98,15 +106,17 @@ fn is_wheel_mouse(dev: &Device, filter: &str) -> bool {
 
 fn run_device(
     path: PathBuf,
-    cfg: Arc<ConfigFile>,
+    shared: Arc<Shared>,
     remap: Arc<RemapTable>,
     keyboard: Option<Arc<VirtualKeyboard>>,
     handled: Arc<Mutex<HashSet<PathBuf>>>,
 ) -> io::Result<()> {
     let mut dev = Device::open(&path)?;
     let name = dev.name().unwrap_or("mouse").to_string();
-    // Resolve this device's effective settings once, up front.
-    let cfg = cfg.resolve(&name);
+    // Resolve this device's effective settings; re-resolved live when the
+    // config version changes (see the loop below).
+    let mut settings = shared.current().resolve(&name);
+    let mut version = shared.version();
     let has_hires = dev
         .supported_relative_axes()
         .is_some_and(|s| s.contains(REL_WHEEL_HI));
@@ -144,7 +154,7 @@ fn run_device(
     dev.grab()?;
     eprintln!(
         "handling {path:?}  {name:?}  hi-res={has_hires}  wheel={}  pointer={}",
-        cfg.wheel_enabled, cfg.pointer_accel
+        settings.wheel_enabled, settings.pointer_accel
     );
 
     let mut vy = Axis::new();
@@ -152,8 +162,8 @@ fn run_device(
     let mut ptr = Pointer::new();
     let mut fdx = 0i32; // accumulated frame motion
     let mut fdy = 0i32;
-    let pa = cfg.pointer_accel;
-    let we = cfg.wheel_enabled;
+    let mut pa = settings.pointer_accel;
+    let mut we = settings.wheel_enabled;
     let mut out: Vec<InputEvent> = Vec::with_capacity(64);
 
     loop {
@@ -161,6 +171,14 @@ fn run_device(
             Ok(e) => e,
             Err(_) => break,
         };
+        // Pick up live config edits pushed by the tuner.
+        let v = shared.version();
+        if v != version {
+            settings = shared.current().resolve(&name);
+            version = v;
+            pa = settings.pointer_accel;
+            we = settings.wheel_enabled;
+        }
         out.clear();
         for ev in events {
             let et = ev.event_type();
@@ -169,7 +187,7 @@ fn run_device(
                 if code == REL_WHEEL_HI.0 {
                     if we {
                         scroll(
-                            &cfg,
+                            &settings,
                             &mut vy,
                             ev.value(),
                             ev.timestamp(),
@@ -183,7 +201,7 @@ fn run_device(
                 } else if code == REL_HWHEEL_HI.0 {
                     if we {
                         scroll(
-                            &cfg,
+                            &settings,
                             &mut hx,
                             ev.value(),
                             ev.timestamp(),
@@ -200,7 +218,7 @@ fn run_device(
                         out.push(InputEvent::new(et, code, ev.value()));
                     } else if !has_hires {
                         scroll(
-                            &cfg,
+                            &settings,
                             &mut vy,
                             ev.value() * 120,
                             ev.timestamp(),
@@ -214,7 +232,7 @@ fn run_device(
                         out.push(InputEvent::new(et, code, ev.value()));
                     } else if !has_hires {
                         scroll(
-                            &cfg,
+                            &settings,
                             &mut hx,
                             ev.value() * 120,
                             ev.timestamp(),
@@ -249,7 +267,7 @@ fn run_device(
             } else if et == EventType::SYNCHRONIZATION && ev.code() == 0 {
                 // SYN_REPORT: accelerate this frame's motion, then emit the SYN
                 if pa && (fdx != 0 || fdy != 0) {
-                    accel_pointer(&cfg, &mut ptr, fdx, fdy, ev.timestamp(), &mut out);
+                    accel_pointer(&settings, &mut ptr, fdx, fdy, ev.timestamp(), &mut out);
                     fdx = 0;
                     fdy = 0;
                 }
@@ -261,6 +279,9 @@ fn run_device(
         if !out.is_empty() && vdev.emit(&out).is_err() {
             break;
         }
+        // Publish the latest measured speeds/gains for the tuner's live markers.
+        shared.telemetry.set_pointer(ptr.speed(), ptr.gain());
+        shared.telemetry.set_wheel(vy.dps(), vy.mult());
     }
 
     let _ = dev.ungrab();
@@ -307,7 +328,7 @@ pub fn watch_buttons() -> i32 {
 
 fn is_mouse_like(dev: &Device) -> bool {
     let name = dev.name().unwrap_or("");
-    if name.contains(VIRT_PREFIX) || name.contains(OLD_VIRT_PREFIX) {
+    if name.contains(VIRT_PREFIX) {
         return false;
     }
     // BTN_MOUSE..=BTN_TASK (0x110..=0x117) covers the usual mouse buttons.

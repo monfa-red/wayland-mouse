@@ -10,18 +10,22 @@
 //! timestamps. The grab is fd-tied, so a crash releases the mouse instantly.
 //!
 //! It can also remap mouse buttons to key combos (e.g. side buttons → workspace
-//! switch) via a shared virtual keyboard.
+//! switch) via a shared virtual keyboard, and be live-tuned over a unix socket
+//! by the `tune` terminal UI.
 //!
 //! Subcommands: `run` (default), `install`, `uninstall`, `status`, `buttons`,
-//! `config`.
+//! `config`, `tune`.
 
 mod cli;
 mod config;
 mod desktop;
 mod device;
 mod install;
+mod ipc;
 mod pointer;
 mod remap;
+#[cfg(feature = "tune")]
+mod tune;
 mod util;
 mod wheel;
 

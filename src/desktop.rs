@@ -14,7 +14,6 @@ use crate::config::CONFIG_DIR;
 
 const GNOME_SCHEMA: &str = "org.gnome.desktop.peripherals.mouse";
 pub const GNOME_BACKUP: &str = "/etc/wayland-mouse/gnome-accel.backup";
-pub const OLD_GNOME_BACKUP: &str = "/etc/scroll-accel.gnome-backup";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Desktop {
@@ -100,15 +99,6 @@ fn gnome_disable() -> bool {
         return false;
     };
 
-    // Inherit an existing v0.1 backup if present so we restore the *original*
-    // values, not our own 'flat'.
-    if !std::path::Path::new(GNOME_BACKUP).exists()
-        && std::path::Path::new(OLD_GNOME_BACKUP).exists()
-    {
-        let _ = fs::create_dir_all(CONFIG_DIR);
-        let _ = fs::rename(OLD_GNOME_BACKUP, GNOME_BACKUP);
-    }
-
     // Back up current values once.
     if !std::path::Path::new(GNOME_BACKUP).exists() {
         let profile =
@@ -135,11 +125,10 @@ pub fn restore_native_accel() {
         return;
     }
     let Some(user) = sudo_user() else { return };
-    // Accept either the new or legacy backup file.
-    let backup = [GNOME_BACKUP, OLD_GNOME_BACKUP]
-        .into_iter()
-        .find(|p| std::path::Path::new(p).exists());
-    let Some(backup) = backup else { return };
+    let backup = GNOME_BACKUP;
+    if !std::path::Path::new(backup).exists() {
+        return;
+    }
     let Ok(text) = fs::read_to_string(backup) else {
         return;
     };
