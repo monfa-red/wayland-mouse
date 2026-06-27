@@ -1,0 +1,15 @@
+[Unit]
+Description=Mos-like mouse wheel scroll acceleration (Wayland/libinput, Rust)
+After=multi-user.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStartPre=-/sbin/modprobe uinput
+ExecStart=/usr/local/bin/scroll-accel
+Restart=always
+RestartSec=2
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target

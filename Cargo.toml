@@ -1,0 +1,12 @@
+[package]
+name = "scroll-accel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+evdev = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
