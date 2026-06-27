@@ -66,6 +66,30 @@ sudo wayland-mouse run --debug    # move + scroll, note the speeds, Ctrl-C
 sudo systemctl start wayland-mouse
 ```
 
+## Remap buttons
+
+Map mouse buttons to key combos — they're sent on a virtual keyboard, so your compositor treats them like any global shortcut (no GNOME D-Bus needed, and it's portable to KDE/sway/Hyprland). The classic use: side buttons that switch workspaces.
+
+First, find out what your buttons are called:
+
+```bash
+sudo wayland-mouse buttons   # press each button; it prints e.g. "BTN_SIDE (code 275)"
+```
+
+Then add rules to your config:
+
+```toml
+[[button]]
+match = "BTN_SIDE"            # or the short form "side"
+keys  = ["Super", "Page_Up"]   # GNOME: previous workspace
+
+[[button]]
+match = "BTN_EXTRA"
+keys  = ["Super", "Page_Down"]  # GNOME: next workspace
+```
+
+`keys` accepts friendly names (`Super`, `Ctrl`, `Alt`, `Shift`, `Page_Up`, arrows, `Enter`, …) or raw evdev names (`KEY_F5`). `mode` is `tap` (default — press + release on click, right for discrete actions) or `hold` (keys held while the button is held). If the daemon stops, the kernel releases any held keys, so nothing gets stuck.
+
 ## Commands
 
 ```
@@ -73,6 +97,7 @@ wayland-mouse run          # run the daemon (what the service runs); default sub
 wayland-mouse install      # install binary, service, config, desktop integration
 wayland-mouse uninstall    # remove all of the above, restore desktop settings
 wayland-mouse status       # service state + effective config
+wayland-mouse buttons      # identify your mouse buttons by name (for remapping)
 wayland-mouse config --print | --check
 ```
 

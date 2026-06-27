@@ -13,6 +13,7 @@ use evdev::{AttributeSet, Device, EventType, InputEvent, Key, RelativeAxisType};
 
 use crate::config::ConfigFile;
 use crate::pointer::{accel_pointer, Pointer};
+use crate::remap::{build_table, RemapTable, VirtualKeyboard};
 use crate::wheel::{scroll, Axis};
 
 /// Virtual-device name prefix for devices we create. `is_wheel_mouse` skips
@@ -28,9 +29,27 @@ const REL_HWHEEL_HI: RelativeAxisType = RelativeAxisType(0x0c);
 /// Daemon entry point: enumerate, grab new wheel mice, and watch for hotplug.
 pub fn run(cfg: Arc<ConfigFile>) {
     let handled: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
+
+    // One shared virtual keyboard for all button remaps (created only if needed).
+    let remap = Arc::new(build_table(&cfg.button));
+    let keyboard = if remap.is_empty() {
+        None
+    } else {
+        match VirtualKeyboard::new(remap.keyset()) {
+            Ok(k) => Some(Arc::new(k)),
+            Err(e) => {
+                eprintln!("wayland-mouse: could not create virtual keyboard ({e}); button remaps disabled");
+                None
+            }
+        }
+    };
+
     eprintln!(
-        "wayland-mouse started (preset={}, name_filter={:?}, debug={})",
-        cfg.preset, cfg.name_filter, cfg.debug
+        "wayland-mouse started (preset={}, name_filter={:?}, buttons={}, debug={})",
+        cfg.preset,
+        cfg.name_filter,
+        cfg.button.len(),
+        cfg.debug
     );
 
     loop {
@@ -46,9 +65,11 @@ pub fn run(cfg: Arc<ConfigFile>) {
                 handled.lock().unwrap().insert(path.clone());
                 let cfg = cfg.clone();
                 let handled = handled.clone();
+                let remap = remap.clone();
+                let keyboard = keyboard.clone();
                 let p = path.clone();
                 thread::spawn(move || {
-                    if let Err(e) = run_device(p.clone(), cfg, handled.clone()) {
+                    if let Err(e) = run_device(p.clone(), cfg, remap, keyboard, handled.clone()) {
                         eprintln!("device {p:?} error: {e}");
                         if let Ok(mut s) = handled.lock() {
                             s.remove(&p);
@@ -78,6 +99,8 @@ fn is_wheel_mouse(dev: &Device, filter: &str) -> bool {
 fn run_device(
     path: PathBuf,
     cfg: Arc<ConfigFile>,
+    remap: Arc<RemapTable>,
+    keyboard: Option<Arc<VirtualKeyboard>>,
     handled: Arc<Mutex<HashSet<PathBuf>>>,
 ) -> io::Result<()> {
     let mut dev = Device::open(&path)?;
@@ -215,6 +238,14 @@ fn run_device(
                 } else {
                     out.push(InputEvent::new(EventType::RELATIVE, code, ev.value()));
                 }
+            } else if et == EventType::KEY {
+                // Remapped button: swallow it and emit the combo on the virtual
+                // keyboard. Unmapped buttons pass straight through.
+                let code = ev.code();
+                match keyboard.as_ref().zip(remap.get(code)) {
+                    Some((kb, action)) => kb.apply(action, ev.value()),
+                    None => out.push(InputEvent::new(et, code, ev.value())),
+                }
             } else if et == EventType::SYNCHRONIZATION && ev.code() == 0 {
                 // SYN_REPORT: accelerate this frame's motion, then emit the SYN
                 if pa && (fdx != 0 || fdy != 0) {
@@ -238,4 +269,53 @@ fn run_device(
     }
     eprintln!("released {path:?}");
     Ok(())
+}
+
+/// `buttons` subcommand: print the evdev name of each mouse button as you press
+/// it, so you can fill in `[[button]]` rules. Reads without grabbing, so the
+/// buttons keep working normally while you identify them.
+pub fn watch_buttons() -> i32 {
+    let mut threads = Vec::new();
+    let mut count = 0usize;
+    for (_path, dev) in evdev::enumerate() {
+        if !is_mouse_like(&dev) {
+            continue;
+        }
+        let name = dev.name().unwrap_or("mouse").to_string();
+        count += 1;
+        let mut dev = dev;
+        threads.push(thread::spawn(move || {
+            while let Ok(evs) = dev.fetch_events() {
+                for ev in evs {
+                    if ev.event_type() == EventType::KEY && ev.value() == 1 {
+                        println!("{name}: {:?}  (code {})", Key(ev.code()), ev.code());
+                    }
+                }
+            }
+        }));
+    }
+    if count == 0 {
+        eprintln!("no mouse-like devices found — are you root?  (sudo wayland-mouse buttons)");
+        return 1;
+    }
+    eprintln!("watching {count} device(s) — press your mouse buttons (Ctrl-C to stop)");
+    for t in threads {
+        let _ = t.join();
+    }
+    0
+}
+
+fn is_mouse_like(dev: &Device) -> bool {
+    let name = dev.name().unwrap_or("");
+    if name.contains(VIRT_PREFIX) || name.contains(OLD_VIRT_PREFIX) {
+        return false;
+    }
+    // BTN_MOUSE..=BTN_TASK (0x110..=0x117) covers the usual mouse buttons.
+    let has_btn = dev
+        .supported_keys()
+        .is_some_and(|k| (0x110..=0x117).any(|c| k.contains(Key(c))));
+    let has_wheel = dev
+        .supported_relative_axes()
+        .is_some_and(|s| s.contains(RelativeAxisType::REL_WHEEL) || s.contains(REL_WHEEL_HI));
+    has_btn || has_wheel
 }

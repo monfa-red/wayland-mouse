@@ -38,6 +38,8 @@ enum Command {
     Uninstall,
     /// Show service state and the effective config.
     Status,
+    /// Print the evdev name of each mouse button as you press it (for [[button]] config).
+    Buttons,
     /// Inspect the configuration.
     Config {
         /// Print the effective (resolved, DPI-rescaled) settings.
@@ -61,6 +63,7 @@ pub fn main() {
         Some(Command::Install) => std::process::exit(install::install()),
         Some(Command::Uninstall) => std::process::exit(install::uninstall()),
         Some(Command::Status) => std::process::exit(install::status()),
+        Some(Command::Buttons) => std::process::exit(device::watch_buttons()),
         Some(Command::Config { print: _, check }) => {
             let code = if check {
                 config::check(&cfg_path)

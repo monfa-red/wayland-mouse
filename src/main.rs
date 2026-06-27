@@ -9,7 +9,11 @@
 //! accumulated per frame and accelerated at SYN_REPORT using the kernel event
 //! timestamps. The grab is fd-tied, so a crash releases the mouse instantly.
 //!
-//! Subcommands: `run` (default), `install`, `uninstall`, `status`, `config`.
+//! It can also remap mouse buttons to key combos (e.g. side buttons → workspace
+//! switch) via a shared virtual keyboard.
+//!
+//! Subcommands: `run` (default), `install`, `uninstall`, `status`, `buttons`,
+//! `config`.
 
 mod cli;
 mod config;
@@ -17,6 +21,7 @@ mod desktop;
 mod device;
 mod install;
 mod pointer;
+mod remap;
 mod util;
 mod wheel;
 

@@ -162,6 +162,8 @@ pub struct ConfigFile {
     pub pointer: PointerCfg,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub device: Vec<DeviceRule>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub button: Vec<ButtonRule>,
 }
 
 impl Default for ConfigFile {
@@ -174,8 +176,23 @@ impl Default for ConfigFile {
             wheel: WheelCfg::default(),
             pointer: PointerCfg::default(),
             device: Vec::new(),
+            button: Vec::new(),
         }
     }
+}
+
+/// A button → key-combo mapping. `match` is a button name (`BTN_SIDE` or
+/// `side`); `keys` is the combo (`["Super", "Page_Up"]`); `mode` is `tap`
+/// (default, press+release on button-down) or `hold` (mirror the button).
+#[derive(Deserialize, Serialize, Default, Clone, Debug)]
+#[serde(default)]
+pub struct ButtonRule {
+    #[serde(rename = "match")]
+    pub match_: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug)]
@@ -466,6 +483,13 @@ pub fn print_effective(path: &Path) -> i32 {
             &cf.resolve(&r.match_),
         );
     }
+    if !cf.button.is_empty() {
+        println!("\n[buttons]");
+        for b in &cf.button {
+            let mode = b.mode.as_deref().unwrap_or("tap");
+            println!("  {} -> {}  ({mode})", b.match_, b.keys.join(" + "));
+        }
+    }
     0
 }
 
@@ -545,7 +569,9 @@ pub fn check(path: &Path) -> i32 {
         "wheel",
         "pointer",
         "device",
+        "button",
     ];
+    const BUTTON: &[&str] = &["match", "keys", "mode"];
     const WHEEL: &[&str] = &[
         "enabled",
         "start_speed",
@@ -587,6 +613,13 @@ pub fn check(path: &Path) -> i32 {
                 }
             }
         }
+        if let Some(arr) = t.get("button").and_then(|v| v.as_array()) {
+            for (i, b) in arr.iter().enumerate() {
+                if let Some(bt) = b.as_table() {
+                    unknowns(bt, BUTTON, &format!("button[{i}]."), &mut warn);
+                }
+            }
+        }
     }
 
     // 3. Preset names.
@@ -607,6 +640,9 @@ pub fn check(path: &Path) -> i32 {
 
     // 4. Value ranges (on the resolved global settings).
     validate_ranges(&cf.resolve_global(), &mut warn);
+
+    // 5. Button rules.
+    crate::remap::validate_buttons(&cf.button, &mut warn);
 
     if warnings == 0 {
         println!("✓ {} is valid", path.display());
@@ -774,5 +810,17 @@ mod tests {
         let cf: ConfigFile = toml::from_str(DEFAULT_TEMPLATE).unwrap();
         let _ = cf.resolve_global();
         assert_eq!(cf.preset, "mac-like");
+    }
+
+    #[test]
+    fn button_rules_parse_from_toml() {
+        let cf: ConfigFile = toml::from_str(
+            "preset = \"mac-like\"\n\
+             [[button]]\nmatch = \"BTN_SIDE\"\nkeys = [\"Super\", \"Page_Up\"]\n",
+        )
+        .unwrap();
+        assert_eq!(cf.button.len(), 1);
+        assert_eq!(cf.button[0].match_, "BTN_SIDE"); // #[serde(rename = "match")]
+        assert_eq!(cf.button[0].keys, vec!["Super", "Page_Up"]);
     }
 }

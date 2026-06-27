@@ -71,3 +71,24 @@ smoothing_ms     = 12     # speed smoothing time constant; lower = twitchier/sna
 # match = "Trackball"
 # [device.pointer]
 # enabled = false
+
+# =====================================================================
+# Button remapping (optional). Map a mouse button to a key combo, sent on a
+# virtual keyboard so your compositor handles it like any global shortcut.
+#   match : button name — BTN_SIDE / BTN_EXTRA / BTN_FORWARD / BTN_BACK
+#           (or the short forms side / extra / forward / back / middle).
+#           Not sure which is which? Run:  sudo wayland-mouse buttons
+#   keys  : the combo, e.g. ["Super", "Page_Up"]. Friendly names (Super, Ctrl,
+#           Alt, Shift, Page_Up, arrows, Enter, …) or raw evdev names (KEY_F5).
+#   mode  : "tap" (default) presses + releases on button-down — right for
+#           discrete actions; "hold" holds the keys while the button is held.
+#
+# Example: side buttons switch GNOME workspaces (default Super+Page_Up/Down).
+# =====================================================================
+# [[button]]
+# match = "BTN_SIDE"
+# keys  = ["Super", "Page_Up"]
+#
+# [[button]]
+# match = "BTN_EXTRA"
+# keys  = ["Super", "Page_Down"]
