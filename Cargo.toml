@@ -1,10 +1,31 @@
 [package]
-name = "scroll-accel"
-version = "0.1.0"
+name = "wayland-mouse"
+version = "0.2.0"
 edition = "2021"
+description = "Mac-like mouse acceleration for Wayland — pointer + scroll-wheel, tuned below the compositor via evdev/uinput."
+license = "MIT"
+repository = "https://github.com/monfa-red/wayland-mouse"
+homepage = "https://github.com/monfa-red/wayland-mouse"
+readme = "README.md"
+keywords = ["wayland", "mouse", "acceleration", "evdev", "scroll"]
+categories = ["command-line-utilities", "hardware-support"]
+rust-version = "1.74"
+
+[[bin]]
+name = "wayland-mouse"
+path = "src/main.rs"
 
 [dependencies]
 evdev = "0.12"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[features]
+default = []
+# Live-tuning TUI (v0.4) lands behind this flag so the default `cargo install`
+# stays lean. Scaffolded now; no code gated on it yet.
+tune = []
 
 [profile.release]
 opt-level = 3

@@ -1,0 +1,73 @@
+# wayland-mouse configuration
+# Installed to /etc/wayland-mouse/config.toml. After editing:
+#   sudo systemctl restart wayland-mouse.service
+# Inspect the resolved values:  wayland-mouse config --print
+# Validate this file:           wayland-mouse config --check
+# Calibrate live (watch your real speeds, then tune below):
+#   sudo systemctl stop wayland-mouse && sudo wayland-mouse run --debug
+#   (move + scroll, note the numbers, Ctrl-C, then start the service again)
+
+# Pick a starting point, then override individual knobs in [wheel] / [pointer].
+#   mac-like : the headline experience (accelerated pointer + wheel)
+#   subtle   : a gentle nudge — kicks in later, softer ramp, lower caps
+#   off      : pure passthrough (both subsystems disabled)
+preset = "mac-like"
+
+# Your mouse's hardware DPI. The curve is DPI-independent: it's calibrated at
+# 1400 DPI and auto-rescaled to this value, so the on-screen feel stays the
+# same across mice and resolutions. Just set this to match your hardware.
+dpi = 1400
+
+# Only accelerate devices whose name contains this (case-insensitive).
+# Empty = every mouse with a wheel.  Example:  name_filter = "Logitech"
+name_filter = ""
+
+# =====================================================================
+# WHEEL acceleration
+#   multiplier = 1 + strength * (speed - start_speed) ^ curve   (<= max_multiplier)
+# where speed is in wheel detents/sec. Below start_speed it stays 1:1.
+# Speed is smoothed asymmetrically: fast attack up, slow release down.
+# =====================================================================
+[wheel]
+enabled        = true   # set false to pass the wheel through untouched
+start_speed    = 8      # below this wheel speed, multiplier = 1.0 (slow scroll unchanged)
+strength       = 0.1    # how fast the multiplier grows past start_speed
+curve          = 1.0    # shape of (speed - start_speed); 1.0 = linear
+max_multiplier = 8.0    # cap on the wheel multiplier
+smoothing_up   = 0.6    # smoothing when speeding up (0..1, higher = snappier)
+smoothing_down = 0.15   # smoothing when slowing down (0..1, lower = no jitter)
+reset_after_ms = 180    # a pause longer than this resets to slow (fresh flick = 1.0x)
+
+# =====================================================================
+# POINTER acceleration (macOS-like logistic S-curve)
+#   gain = precision_gain + (max_gain - precision_gain) * sigmoid((v - midpoint_speed)/transition_width)
+# where v is the smoothed pointer speed (device counts/sec).
+#   slow (v << midpoint): gain -> precision_gain (1:1, precise)
+#   fast (v >> midpoint): gain -> max_gain (soft-capped reach, like macOS)
+#
+# For best results, disable your compositor's own pointer accel so the two
+# curves don't stack. On GNOME, `wayland-mouse install` does this for you
+# (accel-profile flat, speed 0). Not needed if enabled = false below.
+# =====================================================================
+[pointer]
+enabled          = true   # set false for wheel-only (fully DE-agnostic, no flip needed)
+precision_gain   = 0.5    # gain at near-zero speed (precise tracking)
+max_gain         = 2.5    # gain cap at high speed (raise for more reach on flicks)
+midpoint_speed   = 4000   # speed where gain is halfway up the S
+transition_width = 2000   # width of the transition; larger = gentler S
+smoothing_ms     = 12     # speed smoothing time constant; lower = twitchier/snappier
+
+# =====================================================================
+# Per-device overrides (optional). The first rule whose `match` substring is in
+# the device name wins; it layers on top of the global settings above. Each rule
+# may set its own preset, dpi, and [device.wheel] / [device.pointer] overrides.
+# =====================================================================
+# [[device]]
+# match = "Logitech"
+# dpi   = 1600
+# preset = "subtle"
+#
+# [[device]]
+# match = "Trackball"
+# [device.pointer]
+# enabled = false
