@@ -1767,7 +1767,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-mouse"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "arc-swap",
  "clap",
