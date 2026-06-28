@@ -587,14 +587,19 @@ impl App {
             .unwrap_or(0) as i32;
         let n = names.len() as i32;
         let next = names[(((cur + dir) % n + n) % n) as usize].to_string();
-        self.status = format!("preset → {next}   (Enter to apply · Esc to cancel)");
+        self.status =
+            format!("preset → {next}   (Enter to load — resets your tweaks · Esc to cancel)");
         self.pending_preset = Some(next);
     }
 
     fn apply_pending_preset(&mut self) {
         if let Some(p) = self.pending_preset.take() {
             self.cfg.preset = p.clone();
-            self.touch(&format!("preset '{p}' applied"));
+            // Loading a preset is a clean slate: drop the pointer/wheel overrides
+            // so the preset's values (including its enable flags) actually apply.
+            self.cfg.pointer = Default::default();
+            self.cfg.wheel = Default::default();
+            self.touch(&format!("loaded '{p}' preset (tweaks reset)"));
         }
     }
 
@@ -918,30 +923,68 @@ fn knob_line<'a>(app: &App, row: &Row, selected: bool, bar_w: usize) -> Line<'a>
 
 fn render_chart(f: &mut Frame, app: &App, area: Rect, pointer: bool) {
     let s = app.cfg.resolve_unscaled();
-    let (curve, marker, xmax, ymax, xlabel, ylabel) = if pointer {
+    let (curve, marker, xmax, ymax, xlabel, ylabel, enabled) = if pointer {
         // Convert device-space telemetry into config-space for the marker.
+        let enabled = s.pointer_accel;
         let k = (s.dpi / REFERENCE_DPI).max(0.0001);
         let mx = app.tel.pointer_speed / k;
         let my = app.tel.pointer_gain * k;
         let xmax = (s.ptr_mid * 2.0).max(mx * 1.15).max(2000.0);
         let ymax = s.ptr_max.max(my).max(1.0) * 1.15;
-        let curve = sample(xmax, |x| pointer_gain(&s, x));
-        (curve, (mx, my), xmax, ymax, "mouse speed →", "gain ×")
+        // When accel is off the daemon passes through 1:1 — show that honestly.
+        let curve = if enabled {
+            sample(xmax, |x| pointer_gain(&s, x))
+        } else {
+            sample(xmax, |_| 1.0)
+        };
+        (
+            curve,
+            (mx, my),
+            xmax,
+            ymax,
+            "mouse speed →",
+            "gain ×",
+            enabled,
+        )
     } else {
+        let enabled = s.wheel_enabled;
         let mx = app.tel.wheel_dps;
         let my = app.tel.wheel_mult;
         let xmax = (s.threshold_dps * 2.0 + 20.0).max(mx * 1.15).max(30.0);
         let ymax = s.max_mult.max(my).max(1.5) * 1.08;
-        let curve = sample(xmax, |x| wheel_mult(&s, x));
-        (curve, (mx, my), xmax, ymax, "scroll speed →", "× mult")
+        let curve = if enabled {
+            sample(xmax, |x| wheel_mult(&s, x))
+        } else {
+            sample(xmax, |_| 1.0)
+        };
+        (
+            curve,
+            (mx, my),
+            xmax,
+            ymax,
+            "scroll speed →",
+            "× mult",
+            enabled,
+        )
     };
     let marker_pt = [(marker.0.clamp(0.0, xmax), marker.1.clamp(0.0, ymax))];
+
+    let (curve_color, title) = if enabled {
+        (CURVE, Span::from(" curve ").fg(ACCENT).bold())
+    } else {
+        (
+            BAR_EMPTY,
+            Span::from(" curve — ACCEL OFF (1:1, press Space to enable) ")
+                .fg(MARKER)
+                .bold(),
+        )
+    };
 
     let datasets = vec![
         Dataset::default()
             .marker(Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::new().fg(CURVE))
+            .style(Style::new().fg(curve_color))
             .data(&curve),
         Dataset::default()
             .marker(Marker::Braille)
@@ -954,7 +997,7 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect, pointer: bool) {
         .block(
             Block::bordered()
                 .border_type(BorderType::Rounded)
-                .title(Span::from(" curve ").fg(ACCENT).bold()),
+                .title(title),
         )
         .x_axis(
             Axis::default()
@@ -1239,6 +1282,14 @@ mod tests {
         term.draw(|f| ui(f, &app)).unwrap();
         app.modal = Modal::None;
         app.pending_preset = Some("off".into());
+        term.draw(|f| ui(f, &app)).unwrap();
+        // Disabled subsystems → flat-curve path.
+        app.pending_preset = None;
+        app.cfg.wheel.enabled = Some(false);
+        app.cfg.pointer.enabled = Some(false);
+        app.tab = Tab::Wheel;
+        term.draw(|f| ui(f, &app)).unwrap();
+        app.tab = Tab::Pointer;
         term.draw(|f| ui(f, &app)).unwrap();
         // Tiny size, to catch layout underflow.
         let mut tiny = Terminal::new(TestBackend::new(20, 8)).unwrap();
