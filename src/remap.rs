@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Mutex;
 
-use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
-use evdev::{AttributeSet, EventType, InputEvent, Key};
+use evdev::uinput::VirtualDevice;
+use evdev::{AttributeSet, EventType, InputEvent, KeyCode as Key};
 
 use crate::config::ButtonRule;
 
@@ -95,7 +95,7 @@ impl VirtualKeyboard {
     }
 
     pub fn new(keys: &AttributeSet<Key>) -> io::Result<Self> {
-        let dev = VirtualDeviceBuilder::new()?
+        let dev = VirtualDevice::builder()?
             .name("wayland-mouse keyboard")
             .with_keys(keys)?
             .build()?;
@@ -114,7 +114,7 @@ impl VirtualKeyboard {
     fn press(&self, keys: &[Key]) {
         let evs: Vec<_> = keys
             .iter()
-            .map(|k| InputEvent::new(EventType::KEY, k.code(), 1))
+            .map(|k| InputEvent::new(EventType::KEY.0, k.code(), 1))
             .collect();
         self.emit(&evs);
     }
@@ -124,7 +124,7 @@ impl VirtualKeyboard {
         let evs: Vec<_> = keys
             .iter()
             .rev()
-            .map(|k| InputEvent::new(EventType::KEY, k.code(), 0))
+            .map(|k| InputEvent::new(EventType::KEY.0, k.code(), 0))
             .collect();
         self.emit(&evs);
     }

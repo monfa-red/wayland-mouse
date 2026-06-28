@@ -437,7 +437,7 @@ impl App {
             }
             // Capture flow: a fresh button press arrives via telemetry.
             if matches!(self.modal, Modal::CaptureButton) && self.tel.last_button != 0 {
-                let button = format!("{:?}", evdev::Key(self.tel.last_button as u16));
+                let button = format!("{:?}", evdev::KeyCode(self.tel.last_button as u16));
                 self.modal = Modal::EnterKeys {
                     button,
                     input: String::new(),

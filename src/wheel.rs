@@ -4,7 +4,7 @@
 
 use std::time::SystemTime;
 
-use evdev::{EventType, InputEvent, RelativeAxisType};
+use evdev::{EventType, InputEvent, RelativeAxisCode as RelativeAxisType};
 
 use crate::config::Settings;
 use crate::util::dt_secs;
@@ -90,6 +90,6 @@ pub fn scroll(
         );
     }
     if outv != 0 {
-        out.push(InputEvent::new(EventType::RELATIVE, out_code.0, outv));
+        out.push(InputEvent::new(EventType::RELATIVE.0, out_code.0, outv));
     }
 }

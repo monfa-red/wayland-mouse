@@ -69,7 +69,7 @@ pub fn install() -> i32 {
     sh_quiet("modprobe", &["uinput"]);
 
     println!("==> Disabling the compositor's own pointer accel");
-    desktop::disable_native_accel();
+    let accel_auto = desktop::disable_native_accel();
 
     println!("==> Installing & starting the service");
     if let Err(e) = fs::write(SERVICE_PATH, SERVICE_UNIT) {
@@ -83,10 +83,19 @@ pub fn install() -> i32 {
 
     println!();
     println!("Done — wheel + pointer acceleration are live.");
+    if accel_auto {
+        println!("  Your desktop's own pointer acceleration was turned off so it doesn't");
+        println!("  stack on ours (restored on uninstall). Check it any time with `status`.");
+    } else {
+        println!("  ⚠ IMPORTANT: turn off your compositor's pointer acceleration (see the note");
+        println!("    above) — otherwise its curve stacks on top of wayland-mouse's.");
+    }
+    println!();
+    println!("  Tune:       sudo wayland-mouse tune");
+    println!("  Verify:     wayland-mouse status");
     println!(
         "  Configure:  sudo $EDITOR {CONFIG_PATH}   then  sudo systemctl restart {SERVICE_NAME}"
     );
-    println!("  Inspect:    wayland-mouse config --print");
     println!("  Logs:       journalctl -u {SERVICE_NAME} -f");
     println!("  Remove:     sudo wayland-mouse uninstall");
     0
@@ -178,6 +187,17 @@ pub fn status() -> i32 {
         }
     );
     println!("  desktop:  {:?}", desktop::detect());
+    match desktop::gnome_accel_now() {
+        Some((profile, speed)) if profile == "flat" => {
+            println!("  GNOME accel: flat (speed {speed})  ✓  only wayland-mouse's curve applies");
+        }
+        Some((profile, speed)) => {
+            println!("  GNOME accel: {profile} (speed {speed})  ⚠ not flat — GNOME's own accel is");
+            println!("               stacking on top; re-run `sudo wayland-mouse install`, or set");
+            println!("               Settings → Mouse → Acceleration Profile to Flat.");
+        }
+        None => {}
+    }
     println!();
     config::print_effective(Path::new(CONFIG_PATH));
     0

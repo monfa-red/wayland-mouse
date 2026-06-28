@@ -8,8 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use evdev::uinput::VirtualDeviceBuilder;
-use evdev::{AttributeSet, Device, EventType, InputEvent, Key, RelativeAxisType};
+// evdev 0.13 renamed Key -> KeyCode and RelativeAxisType -> RelativeAxisCode;
+// we alias them back to the old names to keep the code below unchanged.
+use evdev::uinput::VirtualDevice;
+use evdev::{
+    AttributeSet, Device, EventType, InputEvent, KeyCode as Key,
+    RelativeAxisCode as RelativeAxisType,
+};
 
 use crate::ipc::Shared;
 use crate::pointer::{accel_pointer, Pointer};
@@ -143,7 +148,7 @@ fn run_device(
     }
 
     let vname = format!("{VIRT_PREFIX} {name}");
-    let mut vdev = VirtualDeviceBuilder::new()?
+    let mut vdev = VirtualDevice::builder()?
         .name(&vname)
         .with_relative_axes(&axes)?
         .with_keys(&keys)?
@@ -194,7 +199,7 @@ fn run_device(
                             'V',
                         );
                     } else {
-                        out.push(InputEvent::new(et, code, ev.value()));
+                        out.push(InputEvent::new(et.0, code, ev.value()));
                     }
                 } else if code == REL_HWHEEL_HI.0 {
                     if we {
@@ -208,12 +213,12 @@ fn run_device(
                             'H',
                         );
                     } else {
-                        out.push(InputEvent::new(et, code, ev.value()));
+                        out.push(InputEvent::new(et.0, code, ev.value()));
                     }
                 } else if code == RelativeAxisType::REL_WHEEL.0 {
                     // Coarse wheel: only when there's no hi-res stream to carry it.
                     if !we {
-                        out.push(InputEvent::new(et, code, ev.value()));
+                        out.push(InputEvent::new(et.0, code, ev.value()));
                     } else if !has_hires {
                         scroll(
                             &settings,
@@ -227,7 +232,7 @@ fn run_device(
                     }
                 } else if code == RelativeAxisType::REL_HWHEEL.0 {
                     if !we {
-                        out.push(InputEvent::new(et, code, ev.value()));
+                        out.push(InputEvent::new(et.0, code, ev.value()));
                     } else if !has_hires {
                         scroll(
                             &settings,
@@ -243,16 +248,16 @@ fn run_device(
                     if pa {
                         fdx += ev.value();
                     } else {
-                        out.push(InputEvent::new(EventType::RELATIVE, code, ev.value()));
+                        out.push(InputEvent::new(EventType::RELATIVE.0, code, ev.value()));
                     }
                 } else if code == RelativeAxisType::REL_Y.0 {
                     if pa {
                         fdy += ev.value();
                     } else {
-                        out.push(InputEvent::new(EventType::RELATIVE, code, ev.value()));
+                        out.push(InputEvent::new(EventType::RELATIVE.0, code, ev.value()));
                     }
                 } else {
-                    out.push(InputEvent::new(EventType::RELATIVE, code, ev.value()));
+                    out.push(InputEvent::new(EventType::RELATIVE.0, code, ev.value()));
                 }
             } else if et == EventType::KEY {
                 // Remapped button: swallow it and emit the combo on the virtual
@@ -269,9 +274,9 @@ fn run_device(
                 match remap.get(code) {
                     Some(action) => match shared.ensure_keyboard() {
                         Some(kb) => kb.apply(action, ev.value()),
-                        None => out.push(InputEvent::new(et, code, ev.value())),
+                        None => out.push(InputEvent::new(et.0, code, ev.value())),
                     },
-                    None => out.push(InputEvent::new(et, code, ev.value())),
+                    None => out.push(InputEvent::new(et.0, code, ev.value())),
                 }
             } else if et == EventType::SYNCHRONIZATION && ev.code() == 0 {
                 // SYN_REPORT: accelerate this frame's motion, then emit the SYN
@@ -280,9 +285,9 @@ fn run_device(
                     fdx = 0;
                     fdy = 0;
                 }
-                out.push(InputEvent::new(et, ev.code(), ev.value()));
+                out.push(InputEvent::new(et.0, ev.code(), ev.value()));
             } else {
-                out.push(InputEvent::new(et, ev.code(), ev.value()));
+                out.push(InputEvent::new(et.0, ev.code(), ev.value()));
             }
         }
         if !out.is_empty() && vdev.emit(&out).is_err() {

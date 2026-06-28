@@ -44,6 +44,29 @@ pub fn detect() -> Desktop {
     }
 }
 
+/// The current GNOME pointer `(accel-profile, speed)` as the invoking user sees
+/// them — for `status` to report whether acceleration is actually off. `None`
+/// if not GNOME or gsettings is unavailable. Run this WITHOUT sudo so it reads
+/// your own session.
+pub fn gnome_accel_now() -> Option<(String, String)> {
+    if detect() != Desktop::Gnome {
+        return None;
+    }
+    let get = |key: &str| -> Option<String> {
+        let out = Command::new("gsettings")
+            .args(["get", GNOME_SCHEMA, key])
+            .output()
+            .ok()?;
+        out.status.success().then(|| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .trim_matches('\'')
+                .to_string()
+        })
+    };
+    Some((get("accel-profile")?, get("speed")?))
+}
+
 /// The logged-in user behind `sudo` (gsettings is per-session, so we can't run
 /// it as root).
 fn sudo_user() -> Option<String> {

@@ -3,7 +3,7 @@
 
 use std::time::SystemTime;
 
-use evdev::{EventType, InputEvent, RelativeAxisType};
+use evdev::{EventType, InputEvent, RelativeAxisCode as RelativeAxisType};
 
 use crate::config::Settings;
 use crate::util::dt_secs;
@@ -85,14 +85,14 @@ pub fn accel_pointer(
     }
     if ox != 0 {
         out.push(InputEvent::new(
-            EventType::RELATIVE,
+            EventType::RELATIVE.0,
             RelativeAxisType::REL_X.0,
             ox,
         ));
     }
     if oy != 0 {
         out.push(InputEvent::new(
-            EventType::RELATIVE,
+            EventType::RELATIVE.0,
             RelativeAxisType::REL_Y.0,
             oy,
         ));

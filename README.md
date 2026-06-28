@@ -112,6 +112,8 @@ The daemon grabs each physical mouse via evdev and re-emits its events through a
 
 The core is desktop-agnostic — **GNOME, KDE, sway, Hyprland**, any libinput Wayland compositor. The only desktop-specific bit is turning off the compositor's *own* pointer acceleration so it doesn't stack on ours: automated on GNOME, a one-line hint elsewhere. **Wheel and button features need no flip at all** and are fully portable.
 
+> **About your existing mouse acceleration.** For pointer accel to feel right, the compositor's own acceleration has to be off — otherwise the two curves stack. On **GNOME**, `install` does this for you (sets *Acceleration Profile → Flat* and *Speed → 0*, restored on uninstall); run **`wayland-mouse status`** any time to confirm it's still `flat ✓` — it warns you if you've turned GNOME's accel back on. On **other desktops**, set your pointer acceleration profile to *flat* once (install prints the exact line). If you only use wheel/button features, none of this matters.
+
 ## License
 
 MIT

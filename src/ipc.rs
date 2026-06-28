@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn set_config_rebuilds_remap_live() {
         let s = shared(); // no button rules initially
-        let side = evdev::Key::BTN_SIDE.code();
+        let side = evdev::KeyCode::BTN_SIDE.code();
         assert!(s.remap().get(side).is_none());
         let cf = ConfigFile {
             button: vec![crate::config::ButtonRule {
