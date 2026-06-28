@@ -61,9 +61,9 @@ pub const PRESET_NAMES: &[&str] = &["mac-like", "subtle", "off"];
 fn mac_like() -> Settings {
     Settings {
         wheel_enabled: true,
-        threshold_dps: 6.0,
-        accel: 0.12,
-        exponent: 1.05,
+        threshold_dps: 5.0,
+        accel: 0.10,
+        exponent: 1.0,
         max_mult: 9.0,
         attack: 0.6,
         release: 0.15,
@@ -680,8 +680,8 @@ mod tests {
     fn default_is_mac_like() {
         let s = ConfigFile::default().resolve_global();
         assert!(s.wheel_enabled && s.pointer_accel);
-        assert!(approx(s.threshold_dps, 6.0));
-        assert!(approx(s.accel, 0.12));
+        assert!(approx(s.threshold_dps, 5.0));
+        assert!(approx(s.accel, 0.10));
         assert!(approx(s.max_mult, 9.0));
         // dpi == reference, so the curve is unscaled
         assert!(approx(s.ptr_base, 0.5));
@@ -743,7 +743,7 @@ mod tests {
     fn unknown_preset_falls_back_without_panicking() {
         let cf: ConfigFile = toml::from_str("preset = \"bogus\"").unwrap();
         let s = cf.resolve_global();
-        assert!(approx(s.threshold_dps, 6.0)); // mac-like fallback
+        assert!(approx(s.threshold_dps, 5.0)); // mac-like fallback
     }
 
     #[test]

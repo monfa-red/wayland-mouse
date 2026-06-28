@@ -8,13 +8,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigFile;
+use crate::remap::{build_table, RemapTable, VirtualKeyboard};
 
 /// Where the control socket lives. Root-owned (the daemon is a system service),
 /// so `tune` connects as root too.
@@ -63,15 +64,23 @@ pub struct Shared {
     version: AtomicU64,
     pub telemetry: Telemetry,
     config_path: PathBuf,
+    /// Button → action map, rebuilt live on every config change.
+    remap: ArcSwap<RemapTable>,
+    /// The shared virtual keyboard (created once by the daemon; `None` if it
+    /// couldn't be created, e.g. no uinput access).
+    keyboard: Mutex<Option<Arc<VirtualKeyboard>>>,
 }
 
 impl Shared {
     pub fn new(cfg: ConfigFile, config_path: PathBuf) -> Arc<Self> {
+        let remap = ArcSwap::from_pointee(build_table(&cfg.button));
         Arc::new(Shared {
             cfg: ArcSwap::from_pointee(cfg),
             version: AtomicU64::new(0),
             telemetry: Telemetry::default(),
             config_path,
+            remap,
+            keyboard: Mutex::new(None),
         })
     }
 
@@ -86,10 +95,24 @@ impl Shared {
         self.version.load(Ordering::Relaxed)
     }
 
-    /// Replace the live config and bump the version.
+    /// Replace the live config, rebuild the remap table, and bump the version.
     pub fn replace(&self, cfg: ConfigFile) {
+        self.remap.store(Arc::new(build_table(&cfg.button)));
         self.cfg.store(Arc::new(cfg));
         self.version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The current button remap table (cheap atomic load).
+    pub fn remap(&self) -> Arc<RemapTable> {
+        self.remap.load_full()
+    }
+
+    pub fn set_keyboard(&self, kb: Arc<VirtualKeyboard>) {
+        *self.keyboard.lock().unwrap() = Some(kb);
+    }
+
+    pub fn keyboard(&self) -> Option<Arc<VirtualKeyboard>> {
+        self.keyboard.lock().unwrap().clone()
     }
 
     /// Persist the current live config to disk as TOML.
@@ -292,6 +315,32 @@ mod tests {
         assert_eq!(parsed.preset, "subtle");
         assert_eq!(parsed.pointer.max_gain, Some(3.3));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn set_config_rebuilds_remap_live() {
+        let s = shared(); // no button rules initially
+        let side = evdev::Key::BTN_SIDE.code();
+        assert!(s.remap().get(side).is_none());
+        let cf = ConfigFile {
+            button: vec![crate::config::ButtonRule {
+                match_: "BTN_SIDE".into(),
+                keys: vec!["Super".into(), "Page_Up".into()],
+                mode: None,
+            }],
+            ..Default::default()
+        };
+        assert!(matches!(
+            process(
+                Request::SetConfig {
+                    config: Box::new(cf)
+                },
+                &s
+            ),
+            Response::Ok
+        ));
+        // The remap table updated without a restart.
+        assert!(s.remap().get(side).is_some());
     }
 
     // The client (tune) and server (daemon) are split processes; this pins the

@@ -26,29 +26,20 @@ pub struct Action {
     pub mode: Mode,
 }
 
-/// Compiled button → action map plus the union of keys it can emit (used to
-/// declare the virtual keyboard's capabilities).
+/// Compiled button → action map. Rebuilt live whenever the config changes.
 pub struct RemapTable {
     map: HashMap<u16, Action>,
-    keyset: AttributeSet<Key>,
 }
 
 impl RemapTable {
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
     pub fn get(&self, code: u16) -> Option<&Action> {
         self.map.get(&code)
-    }
-    pub fn keyset(&self) -> &AttributeSet<Key> {
-        &self.keyset
     }
 }
 
 /// Compile config rules into a [`RemapTable`], logging (and skipping) bad rules.
 pub fn build_table(rules: &[ButtonRule]) -> RemapTable {
     let mut map = HashMap::new();
-    let mut keyset = AttributeSet::<Key>::new();
     for r in rules {
         let Some(btn) = parse_button(&r.match_) else {
             eprintln!(
@@ -82,12 +73,9 @@ pub fn build_table(rules: &[ButtonRule]) -> RemapTable {
             Some("hold") => Mode::Hold,
             _ => Mode::Tap,
         };
-        for k in &keys {
-            keyset.insert(*k);
-        }
         map.insert(btn.code(), Action { keys, mode });
     }
-    RemapTable { map, keyset }
+    RemapTable { map }
 }
 
 /// One shared virtual keyboard for the whole daemon.
@@ -96,6 +84,16 @@ pub struct VirtualKeyboard {
 }
 
 impl VirtualKeyboard {
+    /// Build a keyboard that can emit any standard key, so bindings added live
+    /// in the tuner always work regardless of which keys they use.
+    pub fn new_full() -> io::Result<Self> {
+        let mut keys = AttributeSet::<Key>::new();
+        for code in 1u16..=248 {
+            keys.insert(Key(code)); // KEY_* range (BTN_* start at 0x100)
+        }
+        Self::new(&keys)
+    }
+
     pub fn new(keys: &AttributeSet<Key>) -> io::Result<Self> {
         let dev = VirtualDeviceBuilder::new()?
             .name("wayland-mouse keyboard")
@@ -301,9 +299,9 @@ mod tests {
         ];
         let t = build_table(&rules);
         assert_eq!(t.map.len(), 2); // bogus button + empty-keys rule dropped
-        assert_eq!(t.get(Key::BTN_SIDE.code()).unwrap().mode, Mode::Tap);
+        let side = t.get(Key::BTN_SIDE.code()).unwrap();
+        assert_eq!(side.mode, Mode::Tap);
+        assert_eq!(side.keys, vec![Key::KEY_LEFTMETA, Key::KEY_PAGEUP]);
         assert_eq!(t.get(Key::BTN_EXTRA.code()).unwrap().mode, Mode::Hold);
-        assert!(t.keyset().contains(Key::KEY_LEFTMETA));
-        assert!(t.keyset().contains(Key::KEY_PAGEUP));
     }
 }

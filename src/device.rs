@@ -13,7 +13,7 @@ use evdev::{AttributeSet, Device, EventType, InputEvent, Key, RelativeAxisType};
 
 use crate::ipc::Shared;
 use crate::pointer::{accel_pointer, Pointer};
-use crate::remap::{build_table, RemapTable, VirtualKeyboard};
+use crate::remap::VirtualKeyboard;
 use crate::wheel::{scroll, Axis};
 
 /// Virtual-device name prefix for devices we create. `is_wheel_mouse` skips
@@ -28,21 +28,17 @@ pub fn run(shared: Arc<Shared>) {
     let handled: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
     let cfg = shared.current();
 
-    // One shared virtual keyboard for all button remaps (created only if needed).
-    // Button rules are resolved at startup; editing them in the tuner saves to
-    // disk and applies on the next restart.
-    let remap = Arc::new(build_table(&cfg.button));
-    let keyboard = if remap.is_empty() {
-        None
-    } else {
-        match VirtualKeyboard::new(remap.keyset()) {
-            Ok(k) => Some(Arc::new(k)),
-            Err(e) => {
-                eprintln!("wayland-mouse: could not create virtual keyboard ({e}); button remaps disabled");
-                None
-            }
+    // One shared virtual keyboard for button remaps, declared with the full key
+    // range so bindings added live in the tuner work without a restart. The
+    // remap table itself lives in `shared` and is rebuilt on every config edit.
+    match VirtualKeyboard::new_full() {
+        Ok(kb) => shared.set_keyboard(Arc::new(kb)),
+        Err(e) => {
+            eprintln!(
+                "wayland-mouse: could not create virtual keyboard ({e}); button remaps disabled"
+            )
         }
-    };
+    }
 
     // Control socket for the live-tuning UI.
     {
@@ -72,12 +68,9 @@ pub fn run(shared: Arc<Shared>) {
                 handled.lock().unwrap().insert(path.clone());
                 let shared = shared.clone();
                 let handled = handled.clone();
-                let remap = remap.clone();
-                let keyboard = keyboard.clone();
                 let p = path.clone();
                 thread::spawn(move || {
-                    if let Err(e) = run_device(p.clone(), shared, remap, keyboard, handled.clone())
-                    {
+                    if let Err(e) = run_device(p.clone(), shared, handled.clone()) {
                         eprintln!("device {p:?} error: {e}");
                         if let Ok(mut s) = handled.lock() {
                             s.remove(&p);
@@ -119,12 +112,12 @@ fn is_target_mouse(dev: &Device, filter: &str) -> bool {
 fn run_device(
     path: PathBuf,
     shared: Arc<Shared>,
-    remap: Arc<RemapTable>,
-    keyboard: Option<Arc<VirtualKeyboard>>,
     handled: Arc<Mutex<HashSet<PathBuf>>>,
 ) -> io::Result<()> {
     let mut dev = Device::open(&path)?;
     let name = dev.name().unwrap_or("mouse").to_string();
+    // The virtual keyboard is created once at startup and never replaced.
+    let keyboard = shared.keyboard();
     // Resolve this device's effective settings; re-resolved live when the
     // config version changes (see the loop below).
     let mut settings = shared.current().resolve(&name);
@@ -271,11 +264,13 @@ fn run_device(
             } else if et == EventType::KEY {
                 // Remapped button: swallow it and emit the combo on the virtual
                 // keyboard. Unmapped buttons pass straight through. Either way,
-                // report the press so the tuner's capture flow can see it.
+                // report the press so the tuner's capture flow can see it. The
+                // remap table is read live so tuner edits apply without restart.
                 let code = ev.code();
                 if ev.value() == 1 {
                     shared.telemetry.set_button(code);
                 }
+                let remap = shared.remap();
                 match keyboard.as_ref().zip(remap.get(code)) {
                     Some((kb, action)) => kb.apply(action, ev.value()),
                     None => out.push(InputEvent::new(et, code, ev.value())),

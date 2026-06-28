@@ -660,7 +660,7 @@ impl App {
                 });
                 self.modal = Modal::None;
                 self.sel = self.cfg.button.len().saturating_sub(1);
-                self.touch("binding added — press s to save, then restart to apply");
+                self.touch("binding added — live now; press s to save it to disk");
             }
             _ => {}
         }
@@ -680,7 +680,7 @@ impl App {
         if self.sel < self.cfg.button.len() {
             let removed = self.cfg.button.remove(self.sel);
             self.sel = self.sel.min(self.cfg.button.len().saturating_sub(1));
-            self.touch(&format!("removed {} — restart to apply", removed.match_));
+            self.touch(&format!("removed {} (live)", removed.match_));
         }
     }
 
@@ -806,7 +806,7 @@ fn render_modal(f: &mut Frame, app: &App) {
             vec![
                 Line::from(vec![
                     Span::raw("Button:  "),
-                    Span::styled(button.clone(), Style::new().fg(Color::Magenta).bold()),
+                    Span::styled(button_label(button), Style::new().fg(Color::Magenta).bold()),
                 ]),
                 Line::raw(""),
                 Line::from("Type the shortcut (e.g. Super+Page_Up):".fg(Color::Gray)),
@@ -929,8 +929,9 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect, pointer: bool) {
         let k = (s.dpi / REFERENCE_DPI).max(0.0001);
         let mx = app.tel.pointer_speed / k;
         let my = app.tel.pointer_gain * k;
-        let xmax = (s.ptr_mid * 2.0).max(mx * 1.15).max(2000.0);
-        let ymax = s.ptr_max.max(my).max(1.0) * 1.15;
+        // Static axes so the curve stays put — only the marker moves along it.
+        let xmax = (s.ptr_mid * 2.0).max(2000.0);
+        let ymax = s.ptr_max.max(1.0) * 1.15;
         // When accel is off the daemon passes through 1:1 — show that honestly.
         let curve = if enabled {
             sample(xmax, |x| pointer_gain(&s, x))
@@ -950,8 +951,8 @@ fn render_chart(f: &mut Frame, app: &App, area: Rect, pointer: bool) {
         let enabled = s.wheel_enabled;
         let mx = app.tel.wheel_dps;
         let my = app.tel.wheel_mult;
-        let xmax = (s.threshold_dps * 2.0 + 20.0).max(mx * 1.15).max(30.0);
-        let ymax = s.max_mult.max(my).max(1.5) * 1.08;
+        let xmax = (s.threshold_dps * 2.0).max(50.0);
+        let ymax = (s.max_mult * 1.08).max(1.5);
         let curve = if enabled {
             sample(xmax, |x| wheel_mult(&s, x))
         } else {
@@ -1060,6 +1061,26 @@ fn render_readout(f: &mut Frame, app: &App, area: Rect, pointer: bool) {
     f.render_widget(Paragraph::new(line).block(block), area);
 }
 
+/// Friendly display for an evdev button name, e.g. "BTN_EXTRA (button 5)".
+/// The stored rule keeps the raw evdev name; this is display-only.
+fn button_label(name: &str) -> String {
+    let n = match name {
+        "BTN_LEFT" => Some(1),
+        "BTN_RIGHT" => Some(2),
+        "BTN_MIDDLE" => Some(3),
+        "BTN_SIDE" => Some(4),
+        "BTN_EXTRA" => Some(5),
+        "BTN_FORWARD" => Some(6),
+        "BTN_BACK" => Some(7),
+        "BTN_TASK" => Some(8),
+        _ => None,
+    };
+    match n {
+        Some(n) => format!("{name} (button {n})"),
+        None => name.to_string(),
+    }
+}
+
 fn render_buttons(f: &mut Frame, app: &App, area: Rect) {
     let mut lines = Vec::new();
     if app.cfg.button.is_empty() {
@@ -1081,7 +1102,7 @@ fn render_buttons(f: &mut Frame, app: &App, area: Rect) {
                 Style::new()
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("{marker}{:<12}", b.match_), style),
+                Span::styled(format!("{marker}{:<22}", button_label(&b.match_)), style),
                 Span::styled("→ ", Style::new().fg(Color::Gray)),
                 Span::styled(b.keys.join(" + "), Style::new().fg(Color::Magenta)),
                 Span::styled(format!("   ({mode})"), Style::new().fg(Color::Gray)),
@@ -1089,8 +1110,7 @@ fn render_buttons(f: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::raw(""));
         lines.push(Line::from(
-            "a add · d delete · changes apply after: sudo systemctl restart wayland-mouse"
-                .fg(Color::Gray),
+            "a add · d delete · applied live; press s to save to disk".fg(Color::Gray),
         ));
     }
     let block = Block::bordered()
@@ -1189,7 +1209,7 @@ mod tests {
     fn field_value_reads_preset_defaults() {
         let cfg = ConfigFile::default();
         assert!((field_value(&cfg, Field::MaxGain) - 2.5).abs() < 1e-9);
-        assert!((field_value(&cfg, Field::StartSpeed) - 6.0).abs() < 1e-9);
+        assert!((field_value(&cfg, Field::StartSpeed) - 5.0).abs() < 1e-9);
         assert!(field_value(&cfg, Field::PtrEnabled) > 0.5);
     }
 
