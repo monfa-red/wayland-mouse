@@ -1146,7 +1146,7 @@ mod tests {
     fn field_value_reads_preset_defaults() {
         let cfg = ConfigFile::default();
         assert!((field_value(&cfg, Field::MaxGain) - 2.5).abs() < 1e-9);
-        assert!((field_value(&cfg, Field::StartSpeed) - 5.0).abs() < 1e-9);
+        assert!((field_value(&cfg, Field::StartSpeed) - 6.0).abs() < 1e-9);
         assert!(field_value(&cfg, Field::PtrEnabled) > 0.5);
     }
 

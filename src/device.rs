@@ -67,7 +67,7 @@ pub fn run(shared: Arc<Shared>) {
                     continue;
                 }
             }
-            if is_wheel_mouse(&dev, &name_filter) {
+            if is_target_mouse(&dev, &name_filter) {
                 drop(dev);
                 handled.lock().unwrap().insert(path.clone());
                 let shared = shared.clone();
@@ -90,7 +90,13 @@ pub fn run(shared: Arc<Shared>) {
     }
 }
 
-fn is_wheel_mouse(dev: &Device, filter: &str) -> bool {
+/// A device worth grabbing: a mouse with a wheel, **or** a mouse's sibling
+/// "extra buttons" node. Many mice expose two event devices — the wheel + main
+/// buttons on one, and BTN_SIDE/EXTRA/FORWARD/BACK on another — so we grab the
+/// second too, otherwise those side buttons can't be remapped or captured.
+/// (Only real mice advertise BTN_SIDE/EXTRA/FORWARD/BACK, so this won't grab a
+/// keyboard.)
+fn is_target_mouse(dev: &Device, filter: &str) -> bool {
     let name = dev.name().unwrap_or("");
     if name.contains(VIRT_PREFIX) {
         return false;
@@ -98,7 +104,13 @@ fn is_wheel_mouse(dev: &Device, filter: &str) -> bool {
     let has_wheel = dev
         .supported_relative_axes()
         .is_some_and(|s| s.contains(RelativeAxisType::REL_WHEEL) || s.contains(REL_WHEEL_HI));
-    if !has_wheel {
+    let has_extra_buttons = dev.supported_keys().is_some_and(|k| {
+        k.contains(Key::BTN_SIDE)
+            || k.contains(Key::BTN_EXTRA)
+            || k.contains(Key::BTN_FORWARD)
+            || k.contains(Key::BTN_BACK)
+    });
+    if !has_wheel && !has_extra_buttons {
         return false;
     }
     filter.is_empty() || name.to_lowercase().contains(&filter.to_lowercase())

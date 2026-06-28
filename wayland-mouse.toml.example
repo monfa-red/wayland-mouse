@@ -30,10 +30,10 @@ name_filter = ""
 # =====================================================================
 [wheel]
 enabled        = true   # set false to pass the wheel through untouched
-start_speed    = 5      # below this wheel speed, multiplier = 1.0 (slow scroll unchanged)
-strength       = 0.15   # how fast the multiplier grows past start_speed
-curve          = 1.1    # shape of (speed - start_speed); 1.0 = linear, >1 ramps up faster
-max_multiplier = 10.0   # cap on the wheel multiplier
+start_speed    = 6      # below this wheel speed, multiplier = 1.0 (slow scroll unchanged)
+strength       = 0.12   # how fast the multiplier grows past start_speed
+curve          = 1.05   # shape of (speed - start_speed); 1.0 = linear, >1 ramps up faster
+max_multiplier = 9.0    # cap on the wheel multiplier
 smoothing_up   = 0.6    # smoothing when speeding up (0..1, higher = snappier)
 smoothing_down = 0.15   # smoothing when slowing down (0..1, lower = no jitter)
 reset_after_ms = 180    # a pause longer than this resets to slow (fresh flick = 1.0x)
