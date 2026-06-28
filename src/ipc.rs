@@ -107,12 +107,22 @@ impl Shared {
         self.remap.load_full()
     }
 
-    pub fn set_keyboard(&self, kb: Arc<VirtualKeyboard>) {
-        *self.keyboard.lock().unwrap() = Some(kb);
-    }
-
-    pub fn keyboard(&self) -> Option<Arc<VirtualKeyboard>> {
-        self.keyboard.lock().unwrap().clone()
+    /// The shared virtual keyboard, created on first use. We only ever create
+    /// it when a button remap actually needs it, so users who don't remap any
+    /// buttons get no extra uinput device. Returns `None` only if the device
+    /// couldn't be created (e.g. no uinput access).
+    pub fn ensure_keyboard(&self) -> Option<Arc<VirtualKeyboard>> {
+        let mut guard = self.keyboard.lock().unwrap();
+        if guard.is_none() {
+            match VirtualKeyboard::new_full() {
+                Ok(kb) => *guard = Some(Arc::new(kb)),
+                Err(e) => {
+                    eprintln!("wayland-mouse: could not create virtual keyboard ({e}); button remap skipped");
+                    return None;
+                }
+            }
+        }
+        guard.clone()
     }
 
     /// Persist the current live config to disk as TOML.

@@ -13,7 +13,6 @@ use evdev::{AttributeSet, Device, EventType, InputEvent, Key, RelativeAxisType};
 
 use crate::ipc::Shared;
 use crate::pointer::{accel_pointer, Pointer};
-use crate::remap::VirtualKeyboard;
 use crate::wheel::{scroll, Axis};
 
 /// Virtual-device name prefix for devices we create. `is_wheel_mouse` skips
@@ -28,16 +27,12 @@ pub fn run(shared: Arc<Shared>) {
     let handled: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
     let cfg = shared.current();
 
-    // One shared virtual keyboard for button remaps, declared with the full key
-    // range so bindings added live in the tuner work without a restart. The
-    // remap table itself lives in `shared` and is rebuilt on every config edit.
-    match VirtualKeyboard::new_full() {
-        Ok(kb) => shared.set_keyboard(Arc::new(kb)),
-        Err(e) => {
-            eprintln!(
-                "wayland-mouse: could not create virtual keyboard ({e}); button remaps disabled"
-            )
-        }
+    // The virtual keyboard for button remaps is created on demand (see
+    // Shared::ensure_keyboard), so users who never remap a button get no extra
+    // uinput device. Create it up front only when remaps are already configured,
+    // so the compositor recognises it before the first press.
+    if !cfg.button.is_empty() {
+        shared.ensure_keyboard();
     }
 
     // Control socket for the live-tuning UI.
@@ -116,8 +111,6 @@ fn run_device(
 ) -> io::Result<()> {
     let mut dev = Device::open(&path)?;
     let name = dev.name().unwrap_or("mouse").to_string();
-    // The virtual keyboard is created once at startup and never replaced.
-    let keyboard = shared.keyboard();
     // Resolve this device's effective settings; re-resolved live when the
     // config version changes (see the loop below).
     let mut settings = shared.current().resolve(&name);
@@ -270,9 +263,14 @@ fn run_device(
                 if ev.value() == 1 {
                     shared.telemetry.set_button(code);
                 }
+                // Only touch the keyboard when this button is actually remapped,
+                // so unmapped clicks (and users with no remaps) pay nothing.
                 let remap = shared.remap();
-                match keyboard.as_ref().zip(remap.get(code)) {
-                    Some((kb, action)) => kb.apply(action, ev.value()),
+                match remap.get(code) {
+                    Some(action) => match shared.ensure_keyboard() {
+                        Some(kb) => kb.apply(action, ev.value()),
+                        None => out.push(InputEvent::new(et, code, ev.value())),
+                    },
                     None => out.push(InputEvent::new(et, code, ev.value())),
                 }
             } else if et == EventType::SYNCHRONIZATION && ev.code() == 0 {

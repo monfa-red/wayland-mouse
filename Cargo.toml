@@ -1,6 +1,6 @@
 [package]
 name = "wayland-mouse"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2021"
 description = "Mac-like mouse acceleration for Wayland — pointer + scroll-wheel, tuned below the compositor via evdev/uinput."
 license = "MIT"
@@ -10,6 +10,9 @@ readme = "README.md"
 keywords = ["wayland", "mouse", "acceleration", "evdev", "scroll"]
 categories = ["command-line-utilities", "hardware-support"]
 rust-version = "1.74"
+# Screenshots + CI live in the repo (README references them by absolute URL),
+# but there's no need to ship them in the published crate.
+exclude = ["docs", ".github"]
 
 [[bin]]
 name = "wayland-mouse"

@@ -64,7 +64,7 @@ fn mac_like() -> Settings {
         threshold_dps: 5.0,
         accel: 0.10,
         exponent: 1.0,
-        max_mult: 9.0,
+        max_mult: 8.0,
         attack: 0.6,
         release: 0.15,
         reset_gap: Duration::from_millis(180),
@@ -682,7 +682,7 @@ mod tests {
         assert!(s.wheel_enabled && s.pointer_accel);
         assert!(approx(s.threshold_dps, 5.0));
         assert!(approx(s.accel, 0.10));
-        assert!(approx(s.max_mult, 9.0));
+        assert!(approx(s.max_mult, 8.0));
         // dpi == reference, so the curve is unscaled
         assert!(approx(s.ptr_base, 0.5));
         assert!(approx(s.ptr_max, 2.5));
