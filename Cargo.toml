@@ -1,6 +1,6 @@
 [package]
 name = "wayland-mouse"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Mac-like mouse acceleration for Wayland — pointer + scroll-wheel, tuned below the compositor via evdev/uinput."
 license = "MIT"
@@ -38,3 +38,4 @@ tune = ["dep:ratatui"]
 opt-level = 3
 lto = true
 panic = "abort"
+strip = true

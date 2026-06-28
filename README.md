@@ -52,8 +52,10 @@ You need a `uinput`-capable Linux kernel (standard). Then either:
 
 ```bash
 cargo install wayland-mouse
-sudo wayland-mouse install
+sudo ~/.cargo/bin/wayland-mouse install
 ```
+
+> The full `~/.cargo/bin/` path is used because `sudo` doesn't search your Cargo bin directory. After this, the binary lives in `/usr/local/bin`, so plain `wayland-mouse …` and `sudo wayland-mouse tune` work from anywhere. (If `cargo install` warned that `~/.cargo/bin` isn't on your `PATH`, add it so the other commands resolve.)
 
 **Without Rust** (prebuilt static binary): grab `wayland-mouse` from the [Releases](https://github.com/monfa-red/wayland-mouse/releases) page, then:
 

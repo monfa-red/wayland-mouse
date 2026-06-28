@@ -4,7 +4,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::config::{self, CONFIG_DIR, CONFIG_PATH};
 use crate::desktop;
@@ -23,15 +23,23 @@ fn is_root() -> bool {
         .unwrap_or(false)
 }
 
-/// Run a command, ignoring failure (best-effort cleanup steps).
+/// Run a command, ignoring failure and its output (best-effort cleanup steps —
+/// e.g. stopping a service that may not exist yet). We narrate each step
+/// ourselves, so systemctl's own chatter is just noise.
 fn sh_quiet(cmd: &str, args: &[&str]) {
-    let _ = Command::new(cmd).args(args).status();
+    let _ = Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
-/// Run a command, returning whether it succeeded.
+/// Run a command quietly, returning whether it succeeded.
 fn sh(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd)
         .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
