@@ -258,8 +258,12 @@ fn run_device(
                 }
             } else if et == EventType::KEY {
                 // Remapped button: swallow it and emit the combo on the virtual
-                // keyboard. Unmapped buttons pass straight through.
+                // keyboard. Unmapped buttons pass straight through. Either way,
+                // report the press so the tuner's capture flow can see it.
                 let code = ev.code();
+                if ev.value() == 1 {
+                    shared.telemetry.set_button(code);
+                }
                 match keyboard.as_ref().zip(remap.get(code)) {
                     Some((kb, action)) => kb.apply(action, ev.value()),
                     None => out.push(InputEvent::new(et, code, ev.value())),

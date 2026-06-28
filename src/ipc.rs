@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
@@ -28,6 +28,9 @@ pub struct Telemetry {
     pointer_gain: AtomicU64,
     wheel_dps: AtomicU64,
     wheel_mult: AtomicU64,
+    /// evdev code of the most recently pressed button (0 = none/cleared). Used
+    /// by the tuner's "press the button to map" capture flow.
+    last_button: AtomicU32,
 }
 
 impl Telemetry {
@@ -39,6 +42,9 @@ impl Telemetry {
         self.wheel_dps.store(dps.to_bits(), Ordering::Relaxed);
         self.wheel_mult.store(mult.to_bits(), Ordering::Relaxed);
     }
+    pub fn set_button(&self, code: u16) {
+        self.last_button.store(code as u32, Ordering::Relaxed);
+    }
     fn snapshot(&self) -> TelemetrySample {
         let load = |a: &AtomicU64| f64::from_bits(a.load(Ordering::Relaxed));
         TelemetrySample {
@@ -46,6 +52,7 @@ impl Telemetry {
             pointer_gain: load(&self.pointer_gain),
             wheel_dps: load(&self.wheel_dps),
             wheel_mult: load(&self.wheel_mult),
+            last_button: self.last_button.load(Ordering::Relaxed),
         }
     }
 }
@@ -105,9 +112,13 @@ impl Shared {
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
     GetConfig,
-    SetConfig { config: Box<ConfigFile> },
+    SetConfig {
+        config: Box<ConfigFile>,
+    },
     Save,
     GetTelemetry,
+    /// Clear `last_button` so the next press is recognised as a fresh capture.
+    ArmCapture,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,6 +136,7 @@ pub struct TelemetrySample {
     pub pointer_gain: f64,
     pub wheel_dps: f64,
     pub wheel_mult: f64,
+    pub last_button: u32,
 }
 
 /// Spawn the control-socket server. Best-effort: a failure here just means live
@@ -188,6 +200,10 @@ fn process(req: Request, shared: &Shared) -> Response {
             Err(message) => Response::Error { message },
         },
         Request::GetTelemetry => Response::Telemetry(shared.telemetry.snapshot()),
+        Request::ArmCapture => {
+            shared.telemetry.set_button(0);
+            Response::Ok
+        }
     }
 }
 

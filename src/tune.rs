@@ -15,11 +15,14 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Axis, Block, BorderType, Chart, Dataset, GraphType, Paragraph, Tabs, Wrap};
+use ratatui::widgets::{
+    Axis, Block, BorderType, Chart, Clear, Dataset, GraphType, Paragraph, Tabs, Wrap,
+};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::config::{self, ConfigFile, Settings, REFERENCE_DPI};
 use crate::ipc::{Request, Response, TelemetrySample, SOCKET_PATH};
+use crate::remap::parse_key;
 
 // Palette
 const ACCENT: Color = Color::Cyan;
@@ -94,6 +97,14 @@ impl Client {
     fn telemetry(&mut self) -> Result<TelemetrySample, String> {
         match self.call(&Request::GetTelemetry)? {
             Response::Telemetry(t) => Ok(t),
+            Response::Error { message } => Err(message),
+            _ => Err("unexpected response".into()),
+        }
+    }
+
+    fn arm_capture(&mut self) -> Result<(), String> {
+        match self.call(&Request::ArmCapture)? {
+            Response::Ok => Ok(()),
             Response::Error { message } => Err(message),
             _ => Err("unexpected response".into()),
         }
@@ -287,6 +298,9 @@ fn field_adjust(cfg: &mut ConfigFile, f: Field, dir: f64) {
     field_set(cfg, f, snapped.clamp(lo, hi));
 }
 
+/// Preset cycling math, exercised by the unit test. The live UI stages preset
+/// changes via `App::preview_preset` instead of applying them directly.
+#[cfg(test)]
 fn cycle_preset(cfg: &mut ConfigFile, dir: i32) {
     let names = config::PRESET_NAMES;
     let cur = names
@@ -349,13 +363,30 @@ enum Row {
     Preset,
 }
 
+/// A blocking sub-flow drawn as a centered popup.
+enum Modal {
+    None,
+    /// Waiting for a mouse button press (capture for a new binding).
+    CaptureButton,
+    /// Captured a button; now typing the key combo.
+    EnterKeys {
+        button: String,
+        input: String,
+    },
+}
+
 struct App {
     client: Client,
     cfg: ConfigFile,
+    /// Last-saved config; `dirty()` compares against this so reverting an edit
+    /// clears the unsaved marker.
+    saved: ConfigFile,
     tab: Tab,
     sel: usize,
     tel: TelemetrySample,
-    dirty: bool,
+    /// A preset change staged for confirmation (applies on Enter, not instantly).
+    pending_preset: Option<String>,
+    modal: Modal,
     status: String,
     confirm_quit: bool,
     quit: bool,
@@ -364,16 +395,22 @@ struct App {
 impl App {
     fn new(client: Client, cfg: ConfigFile) -> Self {
         App {
+            saved: cfg.clone(),
             client,
             cfg,
             tab: Tab::Pointer,
             sel: 0,
             tel: TelemetrySample::default(),
-            dirty: false,
+            pending_preset: None,
+            modal: Modal::None,
             status: "move + scroll the mouse to see the marker ride the curve".into(),
             confirm_quit: false,
             quit: false,
         }
+    }
+
+    fn dirty(&self) -> bool {
+        self.cfg != self.saved
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -398,6 +435,15 @@ impl App {
                 Ok(t) => self.tel = t,
                 Err(e) => self.status = format!("disconnected: {e}"),
             }
+            // Capture flow: a fresh button press arrives via telemetry.
+            if matches!(self.modal, Modal::CaptureButton) && self.tel.last_button != 0 {
+                let button = format!("{:?}", evdev::Key(self.tel.last_button as u16));
+                self.modal = Modal::EnterKeys {
+                    button,
+                    input: String::new(),
+                };
+                self.status = "type the shortcut, e.g. Super+Page_Up".into();
+            }
             terminal.draw(|f| ui(f, self))?;
             if event::poll(Duration::from_millis(33))? {
                 if let Event::Key(k) = event::read()? {
@@ -411,6 +457,32 @@ impl App {
     }
 
     fn on_key(&mut self, code: KeyCode, mods: KeyModifiers) {
+        // 1. Modal sub-flows consume input first.
+        match self.modal {
+            Modal::EnterKeys { .. } => return self.key_enter_keys(code),
+            Modal::CaptureButton => {
+                if matches!(code, KeyCode::Esc) {
+                    self.modal = Modal::None;
+                    self.status = "capture cancelled".into();
+                }
+                return;
+            }
+            Modal::None => {}
+        }
+
+        // 2. A staged preset change waits for explicit confirmation.
+        if self.pending_preset.is_some() {
+            match code {
+                KeyCode::Enter => return self.apply_pending_preset(),
+                KeyCode::Esc => return self.cancel_pending(),
+                KeyCode::Char('p') | KeyCode::Right | KeyCode::Char('l') => {
+                    return self.preview_preset(1)
+                }
+                KeyCode::Left | KeyCode::Char('h') => return self.preview_preset(-1),
+                _ => self.cancel_pending(), // any other key cancels, then falls through
+            }
+        }
+
         let big = mods.contains(KeyModifiers::SHIFT);
         // Any non-quit key cancels a pending quit confirmation.
         if !matches!(code, KeyCode::Char('q') | KeyCode::Esc) {
@@ -418,7 +490,7 @@ impl App {
         }
         match code {
             KeyCode::Char('q') | KeyCode::Esc => {
-                if self.dirty && !self.confirm_quit {
+                if self.dirty() && !self.confirm_quit {
                     self.confirm_quit = true;
                     self.status =
                         "unsaved changes — press s to save, or q/Esc again to quit".into();
@@ -439,10 +511,8 @@ impl App {
                 self.adjust(1.0, big)
             }
             KeyCode::Char(' ') | KeyCode::Enter => self.toggle(),
-            KeyCode::Char('p') => {
-                cycle_preset(&mut self.cfg, 1);
-                self.touch("preset changed");
-            }
+            KeyCode::Char('p') => self.preview_preset(1),
+            KeyCode::Char('a') if self.tab == Tab::Buttons => self.start_add_button(),
             KeyCode::Char('s') => self.do_save(),
             KeyCode::Char('r') => self.do_reset(),
             KeyCode::Char('d') if self.tab == Tab::Buttons => self.delete_button(),
@@ -475,16 +545,15 @@ impl App {
             return;
         };
         match row {
-            Row::Preset => cycle_preset(&mut self.cfg, dir as i32),
+            // Preset changes are staged for confirmation, not applied instantly.
+            Row::Preset => self.preview_preset(dir as i32),
             Row::Knob(f) => {
-                if f.is_bool() {
-                    field_adjust(&mut self.cfg, *f, dir);
-                } else {
-                    field_adjust(&mut self.cfg, *f, dir * if big { 5.0 } else { 1.0 });
-                }
+                let f = *f;
+                let mult = if f.is_bool() || !big { 1.0 } else { 5.0 };
+                field_adjust(&mut self.cfg, f, dir * mult);
+                self.touch("");
             }
         }
-        self.touch("");
     }
 
     fn toggle(&mut self) {
@@ -496,11 +565,100 @@ impl App {
             return;
         };
         match row {
-            Row::Preset => cycle_preset(&mut self.cfg, 1),
-            Row::Knob(f) if f.is_bool() => field_adjust(&mut self.cfg, *f, 1.0),
-            Row::Knob(_) => return,
+            Row::Preset => self.preview_preset(1),
+            Row::Knob(f) if f.is_bool() => {
+                let f = *f;
+                field_adjust(&mut self.cfg, f, 1.0);
+                self.touch("");
+            }
+            Row::Knob(_) => {}
         }
-        self.touch("");
+    }
+
+    fn preview_preset(&mut self, dir: i32) {
+        let base = self
+            .pending_preset
+            .clone()
+            .unwrap_or_else(|| self.cfg.preset.clone());
+        let names = config::PRESET_NAMES;
+        let cur = names
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(&base))
+            .unwrap_or(0) as i32;
+        let n = names.len() as i32;
+        let next = names[(((cur + dir) % n + n) % n) as usize].to_string();
+        self.status = format!("preset → {next}   (Enter to apply · Esc to cancel)");
+        self.pending_preset = Some(next);
+    }
+
+    fn apply_pending_preset(&mut self) {
+        if let Some(p) = self.pending_preset.take() {
+            self.cfg.preset = p.clone();
+            self.touch(&format!("preset '{p}' applied"));
+        }
+    }
+
+    fn cancel_pending(&mut self) {
+        if self.pending_preset.take().is_some() {
+            self.status = "preset change cancelled".into();
+        }
+    }
+
+    fn start_add_button(&mut self) {
+        match self.client.arm_capture() {
+            Ok(()) => {
+                self.modal = Modal::CaptureButton;
+                self.status = "press the mouse button you want to map (Esc to cancel)".into();
+            }
+            Err(e) => self.status = format!("capture unavailable: {e}"),
+        }
+    }
+
+    fn key_enter_keys(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char(c) => {
+                if let Modal::EnterKeys { input, .. } = &mut self.modal {
+                    input.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Modal::EnterKeys { input, .. } = &mut self.modal {
+                    input.pop();
+                }
+            }
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "cancelled".into();
+            }
+            KeyCode::Enter => {
+                let (button, input) = match &self.modal {
+                    Modal::EnterKeys { button, input } => (button.clone(), input.clone()),
+                    _ => return,
+                };
+                let keys: Vec<String> = input
+                    .split('+')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if keys.is_empty() {
+                    self.status = "type a key, e.g. Super+Page_Up".into();
+                    return;
+                }
+                if let Some(bad) = keys.iter().find(|t| parse_key(t).is_none()) {
+                    self.status = format!("unknown key: {bad}");
+                    return;
+                }
+                self.cfg.button.push(crate::config::ButtonRule {
+                    match_: button,
+                    keys,
+                    mode: None,
+                });
+                self.modal = Modal::None;
+                self.sel = self.cfg.button.len().saturating_sub(1);
+                self.touch("binding added — press s to save, then restart to apply");
+            }
+            _ => {}
+        }
     }
 
     fn do_reset(&mut self) {
@@ -521,9 +679,8 @@ impl App {
         }
     }
 
-    /// Mark dirty and push the live config to the daemon.
+    /// Push the live config to the daemon (applies instantly).
     fn touch(&mut self, msg: &str) {
-        self.dirty = true;
         if let Err(e) = self.client.set_config(&self.cfg) {
             self.status = format!("live-apply failed: {e}");
         } else if !msg.is_empty() {
@@ -534,7 +691,7 @@ impl App {
     fn do_save(&mut self) {
         match self.client.save() {
             Ok(()) => {
-                self.dirty = false;
+                self.saved = self.cfg.clone();
                 self.confirm_quit = false;
                 self.status = "saved to /etc/wayland-mouse/config.toml ✓".into();
             }
@@ -595,6 +752,78 @@ fn ui(f: &mut Frame, app: &App) {
         Tab::General => render_general(f, app, chunks[1]),
     }
     render_footer(f, app, chunks[2]);
+    if !matches!(app.modal, Modal::None) {
+        render_modal(f, app);
+    }
+}
+
+/// A centered rectangle `px`×`py` percent of `area`.
+fn centered_rect(px: u16, py: u16, area: Rect) -> Rect {
+    let v = Layout::vertical([
+        Constraint::Percentage((100 - py) / 2),
+        Constraint::Percentage(py),
+        Constraint::Percentage((100 - py) / 2),
+    ])
+    .split(area);
+    Layout::horizontal([
+        Constraint::Percentage((100 - px) / 2),
+        Constraint::Percentage(px),
+        Constraint::Percentage((100 - px) / 2),
+    ])
+    .split(v[1])[1]
+}
+
+fn render_modal(f: &mut Frame, app: &App) {
+    let area = centered_rect(60, 40, f.area());
+    let lines = match &app.modal {
+        Modal::CaptureButton => vec![
+            Line::raw(""),
+            Line::from("Press the mouse button you want to map…".bold()),
+            Line::raw(""),
+            Line::from("(side / extra / middle — whichever you like)".fg(Color::Gray)),
+            Line::raw(""),
+            Line::from("Esc to cancel".fg(Color::Gray)),
+        ],
+        Modal::EnterKeys { button, input } => {
+            let valid = !input.is_empty()
+                && input
+                    .split('+')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .all(|t| parse_key(t).is_some());
+            let input_color = if input.is_empty() {
+                Color::Gray
+            } else if valid {
+                Color::Green
+            } else {
+                Color::Red
+            };
+            vec![
+                Line::from(vec![
+                    Span::raw("Button:  "),
+                    Span::styled(button.clone(), Style::new().fg(Color::Magenta).bold()),
+                ]),
+                Line::raw(""),
+                Line::from("Type the shortcut (e.g. Super+Page_Up):".fg(Color::Gray)),
+                Line::from(vec![
+                    Span::raw("  > "),
+                    Span::styled(format!("{input}▌"), Style::new().fg(input_color).bold()),
+                ]),
+                Line::raw(""),
+                Line::from("Enter to add · Esc to cancel".fg(Color::Gray)),
+            ]
+        }
+        Modal::None => return,
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::from(" Add button binding ").fg(ACCENT).bold());
+    f.render_widget(Clear, area);
+    f.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 fn render_tabs(f: &mut Frame, app: &App, area: Rect) {
@@ -793,12 +1022,11 @@ fn render_buttons(f: &mut Frame, app: &App, area: Rect) {
     if app.cfg.button.is_empty() {
         lines.push(Line::from("No button mappings yet.".bold()));
         lines.push(Line::raw(""));
-        lines.push(Line::from(
-            "Find your button names:  sudo wayland-mouse buttons",
-        ));
-        lines.push(Line::from(
-            "then add [[button]] rules to the config (see the example file).",
-        ));
+        lines.push(Line::from(vec![
+            Span::raw("Press "),
+            Span::styled("a", Style::new().fg(KEY).bold()),
+            Span::raw(" to add one — then just press the mouse button and type a shortcut."),
+        ]));
     } else {
         for (i, b) in app.cfg.button.iter().enumerate() {
             let sel = i == app.sel;
@@ -818,7 +1046,7 @@ fn render_buttons(f: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::raw(""));
         lines.push(Line::from(
-            "press d to delete · button changes apply after: sudo systemctl restart wayland-mouse"
+            "a add · d delete · changes apply after: sudo systemctl restart wayland-mouse"
                 .fg(Color::Gray),
         ));
     }
@@ -893,7 +1121,7 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     ]);
     f.render_widget(Paragraph::new(keys), rows[0]);
 
-    let dirty = if app.dirty {
+    let dirty = if app.dirty() {
         Span::styled("●unsaved", Style::new().fg(MARKER).bold())
     } else {
         Span::styled("✓saved", Style::new().fg(Color::Green))
@@ -918,7 +1146,7 @@ mod tests {
     fn field_value_reads_preset_defaults() {
         let cfg = ConfigFile::default();
         assert!((field_value(&cfg, Field::MaxGain) - 2.5).abs() < 1e-9);
-        assert!((field_value(&cfg, Field::StartSpeed) - 8.0).abs() < 1e-9);
+        assert!((field_value(&cfg, Field::StartSpeed) - 5.0).abs() < 1e-9);
         assert!(field_value(&cfg, Field::PtrEnabled) > 0.5);
     }
 
@@ -977,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_every_tab_without_panicking() {
+    fn renders_every_tab_and_modal_without_panicking() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
 
@@ -992,6 +1220,7 @@ mod tests {
             pointer_gain: 1.8,
             wheel_dps: 10.0,
             wheel_mult: 2.5,
+            last_button: 0,
         };
 
         let mut term = Terminal::new(TestBackend::new(140, 36)).unwrap();
@@ -999,8 +1228,41 @@ mod tests {
             term.draw(|f| ui(f, &app)).unwrap();
             app.switch_tab(1);
         }
-        // Also render at a tiny size to catch layout underflow.
+        // Modals and the pending-preset banner.
+        app.tab = Tab::Buttons;
+        app.modal = Modal::CaptureButton;
+        term.draw(|f| ui(f, &app)).unwrap();
+        app.modal = Modal::EnterKeys {
+            button: "BTN_SIDE".into(),
+            input: "Super+Pag".into(),
+        };
+        term.draw(|f| ui(f, &app)).unwrap();
+        app.modal = Modal::None;
+        app.pending_preset = Some("off".into());
+        term.draw(|f| ui(f, &app)).unwrap();
+        // Tiny size, to catch layout underflow.
         let mut tiny = Terminal::new(TestBackend::new(20, 8)).unwrap();
         tiny.draw(|f| ui(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn dirty_clears_when_edit_is_reverted() {
+        let mut app = App::new(dummy_client(), ConfigFile::default());
+        assert!(!app.dirty());
+        app.cfg.pointer.max_gain = Some(3.0);
+        assert!(app.dirty());
+        app.cfg.pointer.max_gain = None; // back to the saved state
+        assert!(!app.dirty());
+    }
+
+    #[test]
+    fn preset_change_is_staged_not_instant() {
+        let mut app = App::new(dummy_client(), ConfigFile::default());
+        app.preview_preset(1);
+        assert_eq!(app.pending_preset.as_deref(), Some("subtle"));
+        assert_eq!(app.cfg.preset, "mac-like"); // unchanged until confirmed
+        app.cancel_pending();
+        assert!(app.pending_preset.is_none());
+        assert_eq!(app.cfg.preset, "mac-like");
     }
 }

@@ -61,10 +61,10 @@ pub const PRESET_NAMES: &[&str] = &["mac-like", "subtle", "off"];
 fn mac_like() -> Settings {
     Settings {
         wheel_enabled: true,
-        threshold_dps: 8.0,
-        accel: 0.1,
-        exponent: 1.0,
-        max_mult: 8.0,
+        threshold_dps: 5.0,
+        accel: 0.15,
+        exponent: 1.1,
+        max_mult: 10.0,
         attack: 0.6,
         release: 0.15,
         reset_gap: Duration::from_millis(180),
@@ -74,7 +74,7 @@ fn mac_like() -> Settings {
         ptr_max: 2.5,
         ptr_mid: 4000.0,
         ptr_width: 2000.0,
-        ptr_tau: 0.012,
+        ptr_tau: 0.006,
         dpi: REFERENCE_DPI,
 
         debug: false,
@@ -151,7 +151,7 @@ pub fn preset_or_default(name: &str) -> Settings {
 // On-disk format (serde)
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct ConfigFile {
     pub preset: String,
@@ -189,7 +189,7 @@ impl Default for ConfigFile {
 /// A button → key-combo mapping. `match` is a button name (`BTN_SIDE` or
 /// `side`); `keys` is the combo (`["Super", "Page_Up"]`); `mode` is `tap`
 /// (default, press+release on button-down) or `hold` (mirror the button).
-#[derive(Deserialize, Serialize, Default, Clone, Debug)]
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct ButtonRule {
     #[serde(rename = "match")]
@@ -200,7 +200,7 @@ pub struct ButtonRule {
     pub mode: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Default, Clone, Debug)]
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct WheelCfg {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -234,7 +234,7 @@ impl WheelCfg {
     }
 }
 
-#[derive(Deserialize, Serialize, Default, Clone, Debug)]
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct PointerCfg {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -262,7 +262,7 @@ impl PointerCfg {
     }
 }
 
-#[derive(Deserialize, Serialize, Default, Clone, Debug)]
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct DeviceRule {
     /// Case-insensitive substring matched against the device name.
@@ -680,9 +680,9 @@ mod tests {
     fn default_is_mac_like() {
         let s = ConfigFile::default().resolve_global();
         assert!(s.wheel_enabled && s.pointer_accel);
-        assert!(approx(s.threshold_dps, 8.0));
-        assert!(approx(s.accel, 0.1));
-        assert!(approx(s.max_mult, 8.0));
+        assert!(approx(s.threshold_dps, 5.0));
+        assert!(approx(s.accel, 0.15));
+        assert!(approx(s.max_mult, 10.0));
         // dpi == reference, so the curve is unscaled
         assert!(approx(s.ptr_base, 0.5));
         assert!(approx(s.ptr_max, 2.5));
@@ -743,7 +743,7 @@ mod tests {
     fn unknown_preset_falls_back_without_panicking() {
         let cf: ConfigFile = toml::from_str("preset = \"bogus\"").unwrap();
         let s = cf.resolve_global();
-        assert!(approx(s.threshold_dps, 8.0)); // mac-like fallback
+        assert!(approx(s.threshold_dps, 5.0)); // mac-like fallback
     }
 
     #[test]
